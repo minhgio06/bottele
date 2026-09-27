@@ -152,11 +152,11 @@ def main():
     print("🔄 Đang khởi tạo bot...")
     
     # Kiểm tra cấu hình
-    if BOT_TOKEN == "TOKEN_CUA_BAN":
+    if BOT_TOKEN == "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA":
         print("❌ LỖI: Bạn chưa nhập BOT_TOKEN!")
         print("   Mở file, thay TOKEN_CUA_BAN bằng Token thật từ @BotFather")
         return
-    if ADMIN_ID == 123456789:
+    if ADMIN_ID == 6163458267:
         print("⚠️ LƯU Ý: Bạn chưa đổi ADMIN_ID, thông báo đơn hàng sẽ không gửi được!")
         print("   Nhắn @getmyid_bot để lấy ID thật của bạn")
 
