@@ -29,8 +29,8 @@ from telegram.ext import (
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFL8ab-zheRorpwEf7Ol1cki_9RVjsfB6I") 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
-LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
+LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -328,7 +328,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "🎉 CHÀO MỪNG BẠN ĐẾN VỚI TIKTOP VIEW!\n\n"
+        "🎉 CHÀO MỪNG BẠN ĐẾN VỚI XU TIKTOP VIEW!\n\n"
         "Vui lòng chọn chức năng bên dưới:",
         reply_markup=menu_chinh(u.id),
     )
@@ -717,7 +717,7 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @Admin\n⏰ 8:00 - 22:00 hàng ngày",
+        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @hotroxutiktok\n⏰ 8:00 - 22:00 hàng ngày",
         parse_mode="HTML",
         reply_markup=menu_chinh(update.effective_user.id),
     )
