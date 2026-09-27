@@ -10,9 +10,9 @@ from telegram.ext import (
 # ========================================
 # ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY
 # ========================================
-BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"
+BOT_TOKEN = "TOKEN_CUA_BAN"  # Thay Token của bạn
 ADMIN_ID = 6163458267
-KENH_YEU_CAU = None  # Đặt là "@TenKenh" nếu muốn bắt tham gia kênh, hoặc None để bỏ
+KENH_YEU_CAU = None  # Hoặc "@TenKenh" nếu muốn bắt tham gia kênh
 
 # ========== DỮ LIỆU HỆ THỐNG ==========
 users = {}
@@ -52,21 +52,26 @@ def init_user(user_id, ten, ref_by=None):
             "captcha_da_xac_minh": False,
             "ngay_reset": datetime.now().strftime("%d/%m/%Y")
         }
-        # Cộng hoa hồng cho người giới thiệu
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
             users[ref_by]["so_du"] += 100
     return users[user_id]
 
-# ========== MENU CHÍNH ==========
+# ========== ✅ MENU CHÍNH — ĐÃ SỬA NÚT ==========
 def menu_chinh():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👤 Hồ Sơ", callback_data="ho_so"),
-         InlineKeyboardButton("🔍 Xem TikTok", callback_data="xem_tiktok")],
-        [InlineKeyboardButton("👥 Khu Vực Leader", callback_data="leader"),
-         InlineKeyboardButton("👑 Nâng Cấp Bậc", callback_data="nang_cap")],
-        [InlineKeyboardButton("🎧 Hỗ Trợ", callback_data="ho_tro"),
-         InlineKeyboardButton("🔐 Nhập CaptCha", callback_data="captcha")],
+        [
+            InlineKeyboardButton("👤 Hồ Sơ", callback_data="ho_so"),
+            InlineKeyboardButton("🔍 Xem TikTok", callback_data="xem_tiktok")
+        ],
+        [
+            InlineKeyboardButton("👥 Khu Vực Leader", callback_data="leader"),
+            InlineKeyboardButton("👑 Nâng Cấp Bậc", callback_data="nang_cap")
+        ],
+        [
+            InlineKeyboardButton("🎧 Hỗ Trợ", callback_data="ho_tro"),
+            InlineKeyboardButton("🔐 Nhập CaptCha", callback_data="captcha")
+        ],
         [InlineKeyboardButton("💰 Rút Tiền", callback_data="rut_tien")]
     ])
 
@@ -80,7 +85,7 @@ async def kt_kenh(user_id, context):
     except:
         return False
 
-# ========== BẮT ĐẦU ==========
+# ========== BẮT ĐẦU — NÚT TRONG TIN NHẮN ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     ref_by = None
@@ -90,7 +95,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     init_user(u.id, u.full_name, ref_by)
     
-    # Kiểm tra kênh
     if not await kt_kenh(u.id, context):
         await update.message.reply_text(
             f"🚀 Để dùng bot, vui lòng tham gia kênh trước:\n🔗 https://t.me/{KENH_YEU_CAU.replace('@','')}\n\nSau khi tham gia, gõ lại /start nhé!",
@@ -100,6 +104,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # ✅ NÚT SẼ HIỆN NGAY BÊN DƯỚI TIN NHẮN — KHÔNG Ở Ô NHẬP
     await update.message.reply_text(
         f"👋 Xin chào, {u.first_name}!\n\n"
         "✨ TikTop View — Tăng lượt xem & tương tác TikTok ✨\n\n"
@@ -109,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 An toàn tuyệt đối, không khóa tài khoản\n"
         "🔹 Hỗ trợ 24/7, hoàn tiền nếu lỗi\n\n"
         "👇 Chọn chức năng bên dưới để bắt đầu:",
-        reply_markup=menu_chinh()
+        reply_markup=menu_chinh()  # ✅ NÚT Ở ĐÂY — GẮN VÀO TIN NHẮN
     )
 
 # ========== HỒ SƠ ==========
@@ -129,7 +134,8 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🔍 Video đã xem: {u['video_da_xem']}
 📅 Tham gia: {u['ngay_vao']}""",
-        parse_mode="HTML", reply_markup=menu_chinh()
+        parse_mode="HTML",
+        reply_markup=menu_chinh()  # ✅ NÚT LUÔN Ở DƯỚI MỌI TIN NHẮN
     )
 
 # ========== XEM TIKTOK KIẾM TIỀN ==========
@@ -139,10 +145,12 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = users[u_id]
     
     if not u["captcha_da_xac_minh"]:
-        await q.edit_message_text("🔐 Vui lòng nhấn [Nhập CaptCha] xác minh trước!", reply_markup=menu_chinh())
+        await q.edit_message_text(
+            "🔐 Vui lòng nhấn [Nhập CaptCha] xác minh trước!",
+            reply_markup=menu_chinh()
+        )
         return
     
-    # Reset lượt xem mỗi ngày
     hom_nay = datetime.now().strftime("%d/%m/%Y")
     if u["ngay_reset"] != hom_nay:
         u["video_ngay"] = 0
@@ -156,13 +164,11 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Tính tiền thưởng
     tien_duoc = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
     u["video_da_xem"] += 1
     u["video_ngay"] += 1
     u["so_du"] += tien_duoc
     
-    # Cộng hoa hồng cấp dưới
     if u["ref_by"] and u["ref_by"] in users:
         users[u["ref_by"]]["so_du"] += int(tien_duoc * HOA_HONG["f1"])
     
@@ -174,7 +180,8 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⏱ Thời gian xem: 15 giây
 
 ✅ Đã xem xong! Tích lũy: {u['so_du']:,}đ""",
-        parse_mode="HTML", reply_markup=menu_chinh()
+        parse_mode="HTML",
+        reply_markup=menu_chinh()
     )
 
 # ========== KHU VỰC LEADER ==========
@@ -199,13 +206,10 @@ F1: 3% | F2: 2% | F3: 1%
 100-299 người → Leader Vàng
 300+ người → Leader Bạch Kim
 
-🎁 THƯỞNG GIỚI THIỆU
-Thành viên: +100đ/người
-Leader Bạc: +200đ/người
-
 🔗 LINK GIỚI THIỆU CỦA BẠN:
 <code>{link}</code>""",
-        parse_mode="HTML", reply_markup=menu_chinh()
+        parse_mode="HTML",
+        reply_markup=menu_chinh()
     )
 
 # ========== NÂNG CẤP BẬC ==========
@@ -221,7 +225,8 @@ async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await q.edit_message_text(
         "👑 <b>NÂNG CẤP BẬC</b>\n\nChọn gói bạn muốn nâng cấp 👇",
-        parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb)
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
 # ========== CHI TIẾT GÓI ==========
@@ -252,7 +257,7 @@ Nội dung CK: TIKTOP_{goi['ten'].replace(' ','_').upper()} {update.effective_us
         ])
     )
 
-# ========== XỬ LÝ NÚT BẤM CHÍNH ==========
+# ========== XỬ LÝ NÚT BẤM ==========
 async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     u_id = update.effective_user.id
@@ -273,29 +278,34 @@ async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u["cap_bac"] = "Leader Bạc" if goi_id==1 else "Leader Vàng" if goi_id==2 else "Leader Bạch Kim" if goi_id==3 else "Leader Kim Cương"
         await q.edit_message_text(
             f"✅ <b>Đã ghi nhận nạp {goi['nap']:,}đ!</b>\n👑 Nâng cấp {goi['ten']} thành công!",
-            parse_mode="HTML", reply_markup=menu_chinh()
+            parse_mode="HTML",
+            reply_markup=menu_chinh()
         )
     elif data == "ho_tro":
         await q.edit_message_text(
             "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @Admin_TikTopView\n⏰ 8:00 - 22:00 hàng ngày",
-            parse_mode="HTML", reply_markup=menu_chinh()
+            parse_mode="HTML",
+            reply_markup=menu_chinh()
         )
     elif data == "captcha":
         u["captcha_da_xac_minh"] = True
         await q.edit_message_text(
             "🔐 <b>CAPTCHA</b>\n\n✅ Đã xác minh thành công! Bây giờ có thể xem video kiếm tiền.",
-            parse_mode="HTML", reply_markup=menu_chinh()
+            parse_mode="HTML",
+            reply_markup=menu_chinh()
         )
     elif data == "rut_tien":
         if u["so_du"] >= 100000:
             await q.edit_message_text(
                 f"💰 <b>RÚT TIỀN</b>\n\nSố dư: {u['so_du']:,}đ\nTối thiểu rút: 100.000đ\n\nNhập số tiền & thông tin ngân hàng:",
-                parse_mode="HTML", reply_markup=menu_chinh()
+                parse_mode="HTML",
+                reply_markup=menu_chinh()
             )
         else:
             await q.edit_message_text(
                 f"💰 <b>RÚT TIỀN</b>\n\nSố dư không đủ!\nHiện có: {u['so_du']:,}đ\nCần ít nhất: 100.000đ",
-                parse_mode="HTML", reply_markup=menu_chinh()
+                parse_mode="HTML",
+                reply_markup=menu_chinh()
             )
 
 # ========== CHẠY BOT ==========
@@ -303,7 +313,6 @@ def main():
     print("="*50)
     print("🤖 TIKTOP VIEW BOT — ĐANG KHỞI ĐỘNG...")
     print(f"✅ Token: {BOT_TOKEN[:20]}...")
-    print(f"✅ Admin: {ADMIN_ID}")
     print("="*50)
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
