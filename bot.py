@@ -862,4 +862,21 @@ async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "❌ Đã hủy
+        "❌ Đã hủy.",
+        reply_markup=menu_chinh(update.effective_user.id)
+    )
+    return ConversationHandler.END
+
+# === KHAI BÁO HANDLER & CHẠY BOT ===
+def main():
+    print("🔄 Đang khởi động BOT...")
+    
+    token = BOT_TOKEN
+    if not token:
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
+        return
+    
+    application = ApplicationBuilder().token(token).build()
+
+    # Handler hội thoại
+    rut_tien
