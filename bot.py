@@ -965,6 +965,7 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("📢 Gửi thông báo", callback_data="admin_gui_tb")],
             [InlineKeyboardButton("📋 Danh sách chờ rút", callback_data="admin_ds_rut")],
             [InlineKeyboardButton("📋 Danh sách chờ nạp", callback_data="admin_ds_nap")],
+            [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
             [InlineKeyboardButton("👥 Xem người dùng", callback_data="admin_ds_nguoi")],
         ]),
     )
@@ -1116,6 +1117,125 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         await query.edit_message_text(
             f"✅ Đã duyệt {h(request_id)} — Trừ {yc['so_tien']:,}đ."
         )
+        return
+
+    # ---------------- DUYỆT TẤT CẢ ĐƠN ----------------
+    if data == "admin_duyet_tat_ca":
+        approved_deposits = []
+        approved_withdrawals = []
+        skipped_withdrawals = []
+        skipped_deposits = []
+
+        # Xử lý toàn bộ đơn trong transaction để tránh duyệt/trừ tiền một phần.
+        with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+
+            deposit_rows = conn.execute(
+                "SELECT * FROM deposits WHERE status='pending' ORDER BY thoi_gian ASC"
+            ).fetchall()
+
+            for yc in deposit_rows:
+                user = conn.execute(
+                    "SELECT * FROM users WHERE id=?", (yc["user_id"],)
+                ).fetchone()
+                if not user:
+                    skipped_deposits.append(yc["request_id"])
+                    continue
+
+                changed = conn.execute(
+                    "UPDATE deposits SET status='approved' WHERE request_id=? AND status='pending'",
+                    (yc["request_id"],),
+                ).rowcount
+                if changed != 1:
+                    continue
+
+                conn.execute(
+                    "UPDATE users SET cap_bac=? WHERE id=?",
+                    (yc["cap_moi"], yc["user_id"]),
+                )
+                approved_deposits.append(dict(yc))
+
+            withdrawal_rows = conn.execute(
+                "SELECT * FROM withdrawals WHERE status='pending' ORDER BY thoi_gian ASC"
+            ).fetchall()
+
+            for yc in withdrawal_rows:
+                changed_balance = conn.execute(
+                    "UPDATE users SET so_du = so_du - ? "
+                    "WHERE id=? AND so_du >= ?",
+                    (yc["so_tien"], yc["user_id"], yc["so_tien"]),
+                ).rowcount
+
+                if changed_balance != 1:
+                    skipped_withdrawals.append(dict(yc))
+                    continue
+
+                changed_request = conn.execute(
+                    "UPDATE withdrawals SET status='approved' "
+                    "WHERE request_id=? AND status='pending'",
+                    (yc["request_id"],),
+                ).rowcount
+
+                if changed_request == 1:
+                    approved_withdrawals.append(dict(yc))
+                else:
+                    # Hoàn lại số dư nếu trạng thái đơn không còn pending.
+                    conn.execute(
+                        "UPDATE users SET so_du = so_du + ? WHERE id=?",
+                        (yc["so_tien"], yc["user_id"]),
+                    )
+
+            conn.commit()
+
+        # Gửi thông báo sau khi transaction đã commit.
+        for yc in approved_deposits:
+            try:
+                await context.bot.send_message(
+                    chat_id=yc["user_id"],
+                    text=(
+                        "✅ <b>NÂNG CẤP THÀNH CÔNG!</b>\n\n"
+                        f"🏆 Cấp hiện tại: {h(yc['cap_moi'])}\n"
+                        f"📺 Giới hạn: {CAP_BAC_CONFIG[yc['cap_moi']]['gioi_han_xem_ngay']} video/ngày\n"
+                        f"💵 Thưởng/video: {CAP_BAC_CONFIG[yc['cap_moi']]['xu_moi_video']:,}đ\n"
+                        f"🔔 Mã: <code>{h(yc['request_id'])}</code>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                print("SEND BULK DEPOSIT NOTICE ERROR:", repr(exc))
+
+        for yc in approved_withdrawals:
+            try:
+                await context.bot.send_message(
+                    chat_id=yc["user_id"],
+                    text=(
+                        "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
+                        f"📋 Mã: <code>{h(yc['request_id'])}</code>\n"
+                        f"💵 Số tiền: {yc['so_tien']:,}đ\n"
+                        f"🔗 Tài khoản: {h(yc['tai_khoan'])}\n"
+                        "✅ Đã duyệt."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                print("SEND BULK WITHDRAW NOTICE ERROR:", repr(exc))
+
+        msg = (
+            "✅ <b>ĐÃ DUYỆT TẤT CẢ ĐƠN CÓ THỂ XỬ LÝ</b>\n\n"
+            f"📥 Nạp/nâng cấp: <b>{len(approved_deposits)}</b> đơn\n"
+            f"💸 Rút tiền: <b>{len(approved_withdrawals)}</b> đơn\n"
+            f"⚠️ Rút bị bỏ qua do số dư không đủ: <b>{len(skipped_withdrawals)}</b> đơn\n"
+            f"⚠️ Nạp bị bỏ qua do người dùng không tồn tại: <b>{len(skipped_deposits)}</b> đơn"
+        )
+
+        if skipped_withdrawals:
+            msg += "\n\n💸 <b>CÁC ĐƠN RÚT CHƯA DUYỆT:</b>"
+            for yc in skipped_withdrawals[:10]:
+                msg += f"\n• <code>{h(yc['request_id'])}</code> — {yc['so_tien']:,}đ"
+            if len(skipped_withdrawals) > 10:
+                msg += f"\n• ... và {len(skipped_withdrawals) - 10} đơn khác"
+
+        await query.edit_message_text(msg, parse_mode="HTML")
         return
 
     # ---------------- ADMIN ACTIONS ----------------
@@ -1423,7 +1543,7 @@ def build_application():
     app.add_handler(
         CallbackQueryHandler(
             xu_ly_admin_callback,
-            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no):.+$|^admin_ds_(rut|nap|nguoi)$",
+            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no):.+$|^(admin_ds_(rut|nap|nguoi)|admin_duyet_tat_ca)$",
         ),
         group=0,
     )
