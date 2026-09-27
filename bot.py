@@ -14,8 +14,8 @@ from telegram.ext import (
 )
 
 # ============= THAY THÔNG TIN CỦA BẠN Ở ĐÂY =============
-BOT_TOKEN = "TOKEN_CUA_BAN"       # Thay bằng Token từ @BotFather
-ADMIN_ID = 123456789              # Thay bằng số ID từ @getmyid_bot
+BOT_TOKEN = "AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"       # Thay bằng Token từ @BotFather
+ADMIN_ID = 6163458267              # Thay bằng số ID từ @getmyid_bot
 # ==========================================================
 
 # DANH SÁCH SẢN PHẨM
