@@ -27,8 +27,8 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFL8ab-zheRorpwEf7Ol1cki_9RVjsfB6I")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772"))
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
 RUT_TOI_THIEU = 50_000
