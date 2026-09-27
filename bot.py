@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 # ===================== CẤU HÌNH =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFXCr1UuqKlkLSdEoS_voD4mTvQJxbs8WA")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
 ADMIN_ID = 6163458267
 KENH_YEU_CAU = None
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
@@ -957,17 +957,4 @@ def main():
     application.run_polling()
 
 if __name__ == "__main__":
-    print("🔄 Đang khởi động BOT...")
-    # Ngăn chạy nhiều lần
-    import sys
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        # ... (giữ nguyên các handler)
-        print("✅ BOT đã sẵn sàng!")
-        application.run_polling()
-    except Exception as e:
-        if "Conflict" in str(e):
-            print("⚠️ Phát hiện phiên bản khác đang chạy! Thoát...")
-        else:
-            print(f"❌ Lỗi: {e}")
-        sys.exit(1)
+    main()
