@@ -8,17 +8,17 @@ from telegram.ext import (
     ContextTypes, CallbackQueryHandler, ConversationHandler
 )
 
-# ========================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKEN_CUA_BAN")  # Đặt token thật tại đây
+# ===================== CẤU HÌNH =====================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ĐIỀN_TOKEN_BOT_CỦA_BẠN_VÀY_ĐÂY")
 ADMIN_ID = 6163458267
-KENH_YEU_CAU = None  # Đặt @ten_kenh nếu yêu cầu tham gia kênh
+KENH_YEU_CAU = None
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
 RUT_TOI_THIEU = 50000
 # Trạng thái hội thoại
 NHAP_TAI_KHOAN = range(1)
 ADMIN_CONG_SO_DU, ADMIN_TRU_SO_DU, ADMIN_GUI_TB, ADMIN_CONG_TAT_CA = range(10, 14)
 NAP_GUI_ANH = 20
-# ========================================
+# =====================================================
 
 users = {}
 danh_sach_cho_duyet = {}
@@ -873,7 +873,4 @@ async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # === KHAI BÁO HANDLER & CHẠY BOT ===
 def main():
-    print("🔄 Đang khởi động BOT...")
-    
-    token = os.get
-       main()
+    print("🔄 Đang khởi
