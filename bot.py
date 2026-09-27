@@ -32,6 +32,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772"))
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
+PHI_XAC_MINH = 30_000
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -100,7 +101,7 @@ HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 # DATABASE
 # ============================================================
 def db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -114,14 +115,12 @@ def today_vn():
 
 
 def h(value):
-    """Escape text before inserting it into Telegram HTML messages."""
     return html.escape(str(value), quote=False)
 
 
 def init_db():
     with db() as conn:
-        conn.executescript(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 ten TEXT NOT NULL,
@@ -135,9 +134,12 @@ def init_db():
                 captcha_da_xac_minh INTEGER NOT NULL DEFAULT 0,
                 ngay_reset TEXT NOT NULL,
                 dang_xem INTEGER NOT NULL DEFAULT 0,
-                tai_khoan TEXT
-            );
+                tai_khoan TEXT,
+                xac_minh_nguoi_that INTEGER NOT NULL DEFAULT 0
+            )
+        """)
 
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS withdrawals (
                 request_id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -146,8 +148,10 @@ def init_db():
                 tai_khoan TEXT NOT NULL,
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending'
-            );
+            )
+        """)
 
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS deposits (
                 request_id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -158,9 +162,28 @@ def init_db():
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 photo_file_id TEXT
-            );
-            """
-        )
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS verification_requests (
+                request_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                ten TEXT NOT NULL,
+                phi INTEGER NOT NULL,
+                thoi_gian TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+            )
+        """)
+
+        # Migration cho database cũ.
+        try:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN xac_minh_nguoi_that "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass
 
 
 def row_to_user(row):
@@ -169,7 +192,9 @@ def row_to_user(row):
 
 def get_user(user_id):
     with db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM users WHERE id=?", (user_id,)
+        ).fetchone()
     return row_to_user(row)
 
 
@@ -177,15 +202,35 @@ def save_user(u):
     with db() as conn:
         conn.execute(
             """
-            UPDATE users SET ten=?, cap_bac=?, so_du=?, video_da_xem=?,
-            video_ngay=?, gioi_thieu=?, ref_by=?, captcha_da_xac_minh=?,
-            ngay_reset=?, dang_xem=?, tai_khoan=? WHERE id=?
+            UPDATE users SET
+                ten=?,
+                cap_bac=?,
+                so_du=?,
+                video_da_xem=?,
+                video_ngay=?,
+                gioi_thieu=?,
+                ref_by=?,
+                captcha_da_xac_minh=?,
+                ngay_reset=?,
+                dang_xem=?,
+                tai_khoan=?,
+                xac_minh_nguoi_that=?
+            WHERE id=?
             """,
             (
-                u["ten"], u["cap_bac"], u["so_du"], u["video_da_xem"],
-                u["video_ngay"], u["gioi_thieu"], u["ref_by"],
-                int(u["captcha_da_xac_minh"]), u["ngay_reset"],
-                int(u["dang_xem"]), u["tai_khoan"], u["id"],
+                u["ten"],
+                u["cap_bac"],
+                u["so_du"],
+                u["video_da_xem"],
+                u["video_ngay"],
+                u["gioi_thieu"],
+                u["ref_by"],
+                int(u["captcha_da_xac_minh"]),
+                u["ngay_reset"],
+                int(u["dang_xem"]),
+                u["tai_khoan"],
+                int(u.get("xac_minh_nguoi_that", 0)),
+                u["id"],
             ),
         )
 
@@ -205,11 +250,9 @@ def init_user(user_id, ten, ref_by=None):
             save_user(u)
         return u
 
-    # Không cho tự giới thiệu chính mình.
     if ref_by == user_id:
         ref_by = None
 
-    # Chỉ nhận ref nếu người giới thiệu đã tồn tại.
     if ref_by is not None and not get_user(ref_by):
         ref_by = None
 
@@ -227,6 +270,7 @@ def init_user(user_id, ten, ref_by=None):
         "ngay_reset": today_vn(),
         "dang_xem": False,
         "tai_khoan": None,
+        "xac_minh_nguoi_that": False,
     }
 
     with db() as conn:
@@ -235,17 +279,17 @@ def init_user(user_id, ten, ref_by=None):
             INSERT INTO users
             (id, ten, cap_bac, so_du, video_da_xem, video_ngay,
              gioi_thieu, ref_by, ngay_vao, captcha_da_xac_minh,
-             ngay_reset, dang_xem, tai_khoan)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ngay_reset, dang_xem, tai_khoan, xac_minh_nguoi_that)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                u["id"], u["ten"], u["cap_bac"], u["so_du"], u["video_da_xem"],
-                u["video_ngay"], u["gioi_thieu"], u["ref_by"], u["ngay_vao"],
-                0, u["ngay_reset"], 0, None,
+                u["id"], u["ten"], u["cap_bac"], u["so_du"],
+                u["video_da_xem"], u["video_ngay"], u["gioi_thieu"],
+                u["ref_by"], u["ngay_vao"], 0, u["ngay_reset"],
+                0, None, 0,
             ),
         )
 
-    # Thưởng giới thiệu cho F1.
     if ref_by:
         ref = get_user(ref_by)
         if ref:
@@ -259,7 +303,9 @@ def init_user(user_id, ten, ref_by=None):
 
 def all_users():
     with db() as conn:
-        rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM users ORDER BY id"
+        ).fetchall()
     return [row_to_user(r) for r in rows]
 
 
@@ -297,7 +343,9 @@ async def kt_kenh(user_id, context):
     if not KENH_YEU_CAU:
         return True
     try:
-        m = await context.bot.get_chat_member(chat_id=KENH_YEU_CAU, user_id=user_id)
+        m = await context.bot.get_chat_member(
+            chat_id=KENH_YEU_CAU, user_id=user_id
+        )
         return m.status in {"member", "administrator", "creator"}
     except Exception:
         return False
@@ -321,9 +369,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await kt_kenh(u.id, context):
         link = KENH_YEU_CAU.replace("@", "")
         await update.message.reply_text(
-            f"🚀 Hãy tham gia kênh trước:\n"
+            "🚀 Hãy tham gia kênh trước:\n"
             f"🔗 https://t.me/{link}\n\n"
-            f"Sau đó gõ /start"
+            "Sau đó gõ /start"
         )
         return
 
@@ -343,13 +391,14 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_daily_if_needed(u)
     cfg = CAP_BAC_CONFIG[u["cap_bac"]]
     tk_info = u["tai_khoan"] or "Chưa liên kết"
+    xac_minh = "✅ Đã xác minh" if u.get("xac_minh_nguoi_that", 0) else "🔒 Chưa xác minh"
 
     await update.message.reply_text(
         f"""👤 HỒ SƠ CỦA BẠN
 
 🆔 ID: <code>{u['id']}</code>
-👤 Tên: {u['ten']}
-👑 Cấp bậc: {u['cap_bac']}
+👤 Tên: {h(u['ten'])}
+👑 Cấp bậc: {h(u['cap_bac'])}
 💰 Số dư: {u['so_du']:,}đ
 
 📺 Xem hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']} video
@@ -358,7 +407,8 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👥 Người giới thiệu: {u['gioi_thieu']}
 📅 Tham gia: {u['ngay_vao']}
 
-🔗 Tài khoản rút tiền: {tk_info}""",
+🔗 Tài khoản rút tiền: {h(tk_info)}
+🛡 Xác minh người thật: {xac_minh}""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
     )
@@ -391,20 +441,19 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"""⏳ Đã hết lượt xem hôm nay!
 
-📺 Giới hạn {u['cap_bac']}: {cfg['gioi_han_xem_ngay']} video/ngày
-💵 Thưởng/video: {cfg['xu_moi_video']:,}đ
+📺 Giới hạn {h(u['cap_bac'])}: {cfg['gioi_han_xem_ngay']} video/ngày
+💵 Thưởng/video: {cfg['xu_moi_video']:,}đ/video
 
 👉 Nâng cấp gói để xem nhiều hơn.""",
             reply_markup=menu_chinh(u["id"]),
         )
         return
 
-    # Chống hai phiên chạy đồng thời cho cùng user.
     u["dang_xem"] = True
     save_user(u)
 
     msg = await update.message.reply_text(
-        f"""🔍 XEM TIKTOK — {u['cap_bac']}
+        f"""🔍 XEM TIKTOK — {h(u['cap_bac'])}
 
 📺 Video hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']}
 💰 Thưởng: {cfg['xu_moi_video']:,}đ/video
@@ -418,11 +467,8 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ),
     )
 
-    # Lưu message id để callback có thể xác thực phiên.
     context.user_data["watch_message_id"] = msg.message_id
-    context.user_data["watch_user_id"] = u["id"]
 
-    import asyncio
     await asyncio.sleep(15)
 
     u = get_user(u["id"])
@@ -430,12 +476,10 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton(
-                f"✅ NHẬN {cfg['xu_moi_video']:,}đ",
-                callback_data=f"nhan_thuong:{u['id']}:{msg.message_id}",
-            )
-        ]]
+        [[InlineKeyboardButton(
+            f"✅ NHẬN {cfg['xu_moi_video']:,}đ",
+            callback_data=f"nhan_thuong:{u['id']}:{msg.message_id}",
+        )]]
     )
     try:
         await msg.edit_reply_markup(reply_markup=keyboard)
@@ -445,13 +489,13 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     try:
         _, uid_s, message_id_s = query.data.split(":")
         uid = int(uid_s)
         message_id = int(message_id_s)
     except (ValueError, AttributeError):
+        await query.answer("❌ Dữ liệu không hợp lệ.", show_alert=True)
         return
 
     if uid != update.effective_user.id:
@@ -466,6 +510,8 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if context.user_data.get("watch_message_id") != message_id:
         await query.answer("❌ Phiên không hợp lệ.", show_alert=True)
         return
+
+    await query.answer()
 
     reset_daily_if_needed(u)
     cfg = CAP_BAC_CONFIG[u["cap_bac"]]
@@ -483,7 +529,6 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     u["dang_xem"] = False
     save_user(u)
 
-    # F1: 3%, F2: 2%, F3: 1%
     ancestor_id = u["ref_by"]
     for rate in (HOA_HONG["f1"], HOA_HONG["f2"], HOA_HONG["f3"]):
         if not ancestor_id:
@@ -527,7 +572,7 @@ async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"""👥 <b>KHU VỰC LEADER</b>
 
-👑 Cấp hiện tại: {u['cap_bac']}
+👑 Cấp hiện tại: {h(u['cap_bac'])}
 📺 Giới hạn xem: {CAP_BAC_CONFIG[u['cap_bac']]['gioi_han_xem_ngay']} video/ngày
 💵 Thưởng/video: {CAP_BAC_CONFIG[u['cap_bac']]['xu_moi_video']:,}đ
 👥 Người giới thiệu: {u['gioi_thieu']}
@@ -592,19 +637,19 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
     await query.edit_message_text(
-        f"""🏅 <b>{g['ten']}</b>
+        f"""🏅 <b>{h(g['ten'])}</b>
 
 💰 Nạp: {g['gia']:,}đ
 📺 Xem: {g['gioi_han_xem']} video TikTok/ngày
 💵 {g['tien_moi_video']:,}đ / video
 
 🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>
-Ngân hàng: {g['ngan_hang']}
-Chủ TK: {g['chu_tk']}
-Số TK: {g['so_tk']}
+Ngân hàng: {h(g['ngan_hang'])}
+Chủ TK: {h(g['chu_tk'])}
+Số TK: {h(g['so_tk'])}
 
 💵 Số tiền: {g['gia']:,}đ
-📝 Nội dung CK: {ma_nap}
+📝 Nội dung CK: {h(ma_nap)}
 
 ⚠️ Vui lòng chuyển đúng số tiền và đúng nội dung!""",
         parse_mode="HTML",
@@ -631,16 +676,19 @@ async def da_chuyen_khoan_callback(update: Update, context: ContextTypes.DEFAULT
         ).fetchone()
 
     if not yc:
-        await query.answer("❌ Yêu cầu không tồn tại hoặc đã xử lý.", show_alert=True)
+        await query.answer(
+            "❌ Yêu cầu không tồn tại hoặc đã xử lý.",
+            show_alert=True,
+        )
         return ConversationHandler.END
 
     context.user_data["ma_nap_dang_xu_ly"] = ma_nap
     await query.edit_message_text(
         f"""📩 <b>XÁC NHẬN CHUYỂN KHOẢN</b>
 
-Vui lòng gửi ảnh màn hình chuyển khoản thành công hoặc biên lai để admin kiểm tra.
+Vui lòng gửi ảnh màn hình chuyển khoản thành công hoặc biên lai để Admin kiểm tra.
 
-📦 Gói: {yc['goi_key'].replace('goi_', '').upper()}
+📦 Gói: {h(yc['goi_key'].replace('goi_', '').upper())}
 💵 Số tiền: {yc['gia']:,}đ""",
         parse_mode="HTML",
     )
@@ -668,12 +716,12 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
     caption = f"""📢 <b>YÊU CẦU NẠP TIỀN — CHỜ DUYỆT</b>
 
 🆔 ID: <code>{yc['user_id']}</code>
-👤 Tên: {yc['ten']}
-📦 Gói: {yc['goi_key'].replace('goi_', '').upper()}
+👤 Tên: {h(yc['ten'])}
+📦 Gói: {h(yc['goi_key'].replace('goi_', '').upper())}
 💵 Số tiền: {yc['gia']:,}đ
-🏆 Nâng cấp lên: {yc['cap_moi']}
-📅 Thời gian: {yc['thoi_gian']}
-🔔 Mã: <code>{yc['request_id']}</code>"""
+🏆 Nâng cấp lên: {h(yc['cap_moi'])}
+📅 Thời gian: {h(yc['thoi_gian'])}
+🔔 Mã: <code>{h(yc['request_id'])}</code>"""
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ DUYỆT", callback_data=f"duyet_nap_ok:{ma_nap}"),
@@ -704,9 +752,9 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"""✅ <b>ĐÃ GỬI XÁC NHẬN</b>
 
-📦 Gói: {yc['goi_key'].replace('goi_', '').upper()}
+📦 Gói: {h(yc['goi_key'].replace('goi_', '').upper())}
 💵 Số tiền: {yc['gia']:,}đ
-⏳ Đang chờ admin duyệt.""",
+⏳ Đang chờ Admin duyệt.""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u_id),
     )
@@ -738,6 +786,110 @@ async def captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+# XÁC MINH NGƯỜI THẬT
+# ============================================================
+async def rut_bi_khoa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer(
+        "🔒 Bạn cần xác minh người thật trước khi rút tiền.",
+        show_alert=True,
+    )
+
+
+async def xac_minh_nguoi_that_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+    await query.answer()
+
+    u = get_user(update.effective_user.id)
+    if not u:
+        return
+
+    if u.get("xac_minh_nguoi_that", 0):
+        await query.answer(
+            "✅ Bạn đã được xác minh.",
+            show_alert=True,
+        )
+        return
+
+    with db() as conn:
+        old = conn.execute(
+            """
+            SELECT * FROM verification_requests
+            WHERE user_id=? AND status='pending'
+            ORDER BY thoi_gian DESC
+            LIMIT 1
+            """,
+            (u["id"],),
+        ).fetchone()
+
+        if old:
+            request_id = old["request_id"]
+        else:
+            request_id = f"XM{u['id']}{int(time.time() * 1000)}"
+            conn.execute(
+                """
+                INSERT INTO verification_requests
+                (request_id, user_id, ten, phi, thoi_gian, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+                """,
+                (
+                    request_id,
+                    u["id"],
+                    u["ten"],
+                    PHI_XAC_MINH,
+                    now_vn().strftime("%d/%m/%Y %H:%M"),
+                ),
+            )
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "✅ DUYỆT XÁC MINH",
+            callback_data=f"xacminh_ok:{request_id}",
+        ),
+        InlineKeyboardButton(
+            "❌ TỪ CHỐI",
+            callback_data=f"xacminh_no:{request_id}",
+        ),
+    ]])
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"""🛡 <b>YÊU CẦU XÁC MINH NGƯỜI THẬT</b>
+
+🆔 ID: <code>{u['id']}</code>
+👤 Tên: {h(u['ten'])}
+💰 Phí xác minh: {PHI_XAC_MINH:,}đ
+🏦 Tài khoản: {h(u['tai_khoan'] or 'Chưa liên kết')}
+
+📋 Mã yêu cầu:
+<code>{h(request_id)}</code>
+
+⏳ Đang chờ Admin xử lý.""",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+    await query.edit_message_text(
+        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
+
+💰 Phí xác minh: <b>{PHI_XAC_MINH:,}đ</b>
+
+📋 Mã yêu cầu:
+<code>{h(request_id)}</code>
+
+⏳ Yêu cầu đã được gửi tới Admin.
+✅ Sau khi Admin xác nhận, chức năng rút tiền sẽ được mở khóa.
+
+⚠️ Phí xác minh cần được thanh toán/xác nhận theo quy trình của hệ thống.""",
+        parse_mode="HTML",
+        reply_markup=menu_chinh(u["id"]),
+    )
+
+
+# ============================================================
 # RÚT TIỀN + LIÊN KẾT TÀI KHOẢN
 # ============================================================
 async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -748,7 +900,7 @@ async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not u["tai_khoan"]:
         await update.message.reply_text(
             "💰 <b>RÚT TIỀN</b>\n\n"
-            "Bạn chưa liên kết tài khoản nhận tiền.",
+            "🏦 Bạn chưa liên kết tài khoản nhận tiền.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton(
@@ -759,12 +911,54 @@ async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
+    if not u.get("xac_minh_nguoi_that", 0):
+        parts = u["tai_khoan"].split()
+        bank = parts[0] if parts else "Chưa có"
+        number = parts[1] if len(parts) > 1 else "Chưa có"
+        owner = " ".join(parts[2:]) if len(parts) > 2 else "Chưa có"
+
+        await update.message.reply_text(
+            f"""💰 <b>RÚT TIỀN</b>
+
+🏦 <b>TÀI KHOẢN ĐÃ LIÊN KẾT</b>
+
+🏦 Tên ngân hàng: <b>{h(bank)}</b>
+🔢 Số tài khoản: <b>{h(number)}</b>
+👤 Chủ tài khoản: <b>{h(owner)}</b>
+
+Bạn có thể sử dụng tài khoản này cho các lần rút sau.
+
+🔒 <b>CHƯA THỂ RÚT TIỀN</b>
+
+Bạn cần xác minh người thật trước khi tạo yêu cầu rút tiền.
+
+💰 <b>Phí xác minh: {PHI_XAC_MINH:,}đ</b>
+✅ Sau khi Admin duyệt xác minh, bạn được mở khóa rút tiền.""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "💸 Rút tiền",
+                    callback_data="rut_bi_khoa",
+                )],
+                [InlineKeyboardButton(
+                    "🔄 Thay đổi tài khoản",
+                    callback_data="lien_ket_tai_khoan",
+                )],
+                [InlineKeyboardButton(
+                    "🛡 Xác minh người thật",
+                    callback_data="xac_minh_nguoi_that",
+                )],
+            ]),
+        )
+        return ConversationHandler.END
+
     if u["so_du"] < RUT_TOI_THIEU:
         await update.message.reply_text(
-            f"💰 <b>RÚT TIỀN</b>\n\n"
-            f"❌ Số dư không đủ!\n"
-            f"Hiện có: {u['so_du']:,}đ\n"
-            f"Tối thiểu: {RUT_TOI_THIEU:,}đ",
+            f"""💰 <b>RÚT TIỀN</b>
+
+❌ Số dư không đủ!
+💵 Hiện có: {u['so_du']:,}đ
+💰 Tối thiểu: {RUT_TOI_THIEU:,}đ""",
             parse_mode="HTML",
             reply_markup=menu_chinh(u["id"]),
         )
@@ -774,10 +968,11 @@ async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"""💰 RÚT TIỀN
 
-🔗 Tài khoản: {u['tai_khoan']}
+🔗 Tài khoản: {h(u['tai_khoan'])}
 💵 Số dư: {u['so_du']:,}đ
 
 Vui lòng nhập số tiền muốn rút (tối thiểu {RUT_TOI_THIEU:,}đ):""",
+        parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
     return NHAP_TAI_KHOAN
@@ -834,14 +1029,16 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
 
         await update.message.reply_text(
             f"✅ <b>LIÊN KẾT TÀI KHOẢN THÀNH CÔNG!</b>\n\n"
-            f"🔗 {u['tai_khoan']}",
+            f"🔗 {h(u['tai_khoan'])}",
             parse_mode="HTML",
             reply_markup=menu_chinh(u["id"]),
         )
         return ConversationHandler.END
 
     try:
-        so_tien = int(text.replace(".", "").replace(",", "").replace("đ", "").strip())
+        so_tien = int(
+            text.replace(".", "").replace(",", "").replace("đ", "").strip()
+        )
     except ValueError:
         await update.message.reply_text(
             "❌ Vui lòng nhập số tiền hợp lệ.",
@@ -856,7 +1053,6 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         )
         return NHAP_TAI_KHOAN
 
-    # Kiểm tra lại số dư ngay trước khi tạo yêu cầu.
     u = get_user(u["id"])
     if so_tien > u["so_du"]:
         await update.message.reply_text(
@@ -875,7 +1071,11 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
             VALUES (?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
-                request_id, u["id"], u["ten"], so_tien, u["tai_khoan"],
+                request_id,
+                u["id"],
+                u["ten"],
+                so_tien,
+                u["tai_khoan"],
                 now_vn().strftime("%d/%m/%Y %H:%M"),
             ),
         )
@@ -895,11 +1095,11 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         chat_id=ADMIN_ID,
         text=f"""📢 <b>YÊU CẦU RÚT TIỀN MỚI</b>
 
-📋 Mã: <code>{request_id}</code>
+📋 Mã: <code>{h(request_id)}</code>
 🆔 ID: <code>{u['id']}</code>
-👤 Tên: {u['ten']}
+👤 Tên: {h(u['ten'])}
 💵 Số tiền: {so_tien:,}đ
-🔗 Tài khoản: {u['tai_khoan']}
+🔗 Tài khoản: {h(u['tai_khoan'])}
 📅 Thời gian: {now_vn().strftime('%d/%m/%Y %H:%M')}""",
         parse_mode="HTML",
         reply_markup=keyboard,
@@ -908,23 +1108,14 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text(
         f"""✅ <b>ĐÃ GỬI YÊU CẦU RÚT TIỀN</b>
 
-📋 Mã: <code>{request_id}</code>
+📋 Mã: <code>{h(request_id)}</code>
 💵 Số tiền: {so_tien:,}đ
-⏳ Đang chờ admin duyệt.""",
+⏳ Đang chờ Admin duyệt.""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
     )
 
     context.user_data.pop("dang_rut_tien", None)
-    return ConversationHandler.END
-
-
-async def rut_tien_huy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "❌ Đã hủy.",
-        reply_markup=menu_chinh(update.effective_user.id),
-    )
     return ConversationHandler.END
 
 
@@ -944,6 +1135,9 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
         tong_cho_nap = conn.execute(
             "SELECT COUNT(*) FROM deposits WHERE status='pending'"
         ).fetchone()[0]
+        tong_cho_xac_minh = conn.execute(
+            "SELECT COUNT(*) FROM verification_requests WHERE status='pending'"
+        ).fetchone()[0]
         tong_so_du = conn.execute(
             "SELECT COALESCE(SUM(so_du),0) FROM users"
         ).fetchone()[0]
@@ -954,6 +1148,7 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 👥 Tổng người dùng: <b>{tong_nguoi}</b>
 ⏳ Chờ rút tiền: <b>{tong_cho_rut}</b>
 ⏳ Chờ nạp/nâng cấp: <b>{tong_cho_nap}</b>
+🛡 Chờ xác minh: <b>{tong_cho_xac_minh}</b>
 💰 Tổng số dư hệ thống: <b>{tong_so_du:,}đ</b>
 
 👇 Chọn chức năng:""",
@@ -965,6 +1160,7 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("📢 Gửi thông báo", callback_data="admin_gui_tb")],
             [InlineKeyboardButton("📋 Danh sách chờ rút", callback_data="admin_ds_rut")],
             [InlineKeyboardButton("📋 Danh sách chờ nạp", callback_data="admin_ds_nap")],
+            [InlineKeyboardButton("🛡 Danh sách xác minh", callback_data="admin_ds_xacminh")],
             [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
             [InlineKeyboardButton("👥 Xem người dùng", callback_data="admin_ds_nguoi")],
         ]),
@@ -978,88 +1174,200 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("❌ Không có quyền.", show_alert=True)
         return
 
-    await query.answer()
-
     data = query.data
 
-    # ---------------- NẠP/NÂNG CẤP ----------------
+    # --------------------------------------------------------
+    # XÁC MINH NGƯỜI THẬT
+    # --------------------------------------------------------
+    if data.startswith("xacminh_ok:") or data.startswith("xacminh_no:"):
+        await query.answer()
+        request_id = data.split(":", 1)[1]
+
+        with db() as conn:
+            yc = conn.execute(
+                """
+                SELECT * FROM verification_requests
+                WHERE request_id=? AND status='pending'
+                """,
+                (request_id,),
+            ).fetchone()
+
+            if not yc:
+                await query.edit_message_text(
+                    "❌ Yêu cầu không tồn tại hoặc đã được xử lý."
+                )
+                return
+
+            if data.startswith("xacminh_ok:"):
+                # Chỉ đánh dấu xác minh; không tự động trừ phí.
+                conn.execute(
+                    """
+                    UPDATE verification_requests
+                    SET status='approved'
+                    WHERE request_id=? AND status='pending'
+                    """,
+                    (request_id,),
+                )
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET xac_minh_nguoi_that=1
+                    WHERE id=?
+                    """,
+                    (yc["user_id"],),
+                )
+
+                await context.bot.send_message(
+                    chat_id=yc["user_id"],
+                    text=f"""🛡 <b>XÁC MINH THÀNH CÔNG</b>
+
+✅ Admin đã xác nhận yêu cầu của bạn.
+
+💰 Phí xác minh: {yc['phi']:,}đ
+🔓 Chức năng rút tiền đã được mở khóa.
+
+Bạn có thể nhấn <b>💰 Rút Tiền</b> để tiếp tục.""",
+                    parse_mode="HTML",
+                )
+
+                await query.edit_message_text(
+                    f"✅ Đã duyệt xác minh cho ID {yc['user_id']}."
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE verification_requests
+                    SET status='rejected'
+                    WHERE request_id=? AND status='pending'
+                    """,
+                    (request_id,),
+                )
+
+                await context.bot.send_message(
+                    chat_id=yc["user_id"],
+                    text=f"""❌ <b>XÁC MINH BỊ TỪ CHỐI</b>
+
+📋 Mã: <code>{h(request_id)}</code>
+
+Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
+                    parse_mode="HTML",
+                )
+
+                await query.edit_message_text(
+                    f"❌ Đã từ chối xác minh ID {yc['user_id']}."
+                )
+        return
+
+    await query.answer()
+
+    # --------------------------------------------------------
+    # NẠP/NÂNG CẤP
+    # --------------------------------------------------------
     if data.startswith("duyet_nap_ok:") or data.startswith("duyet_nap_no:"):
         ma_nap = data.split(":", 1)[1]
 
         with db() as conn:
             yc = conn.execute(
-                "SELECT * FROM deposits WHERE request_id=? AND status='pending'",
+                """
+                SELECT * FROM deposits
+                WHERE request_id=? AND status='pending'
+                """,
                 (ma_nap,),
             ).fetchone()
 
             if not yc:
-                await query.edit_message_text("❌ Yêu cầu không tồn tại hoặc đã xử lý.")
+                await query.edit_message_text(
+                    "❌ Yêu cầu không tồn tại hoặc đã xử lý."
+                )
                 return
 
             if data.startswith("duyet_nap_ok:"):
                 conn.execute(
-                    "UPDATE deposits SET status='approved' WHERE request_id=?",
+                    """
+                    UPDATE deposits
+                    SET status='approved'
+                    WHERE request_id=? AND status='pending'
+                    """,
                     (ma_nap,),
                 )
-                user = get_user(yc["user_id"])
-                if user:
-                    user["cap_bac"] = yc["cap_moi"]
-                    save_user(user)
+                conn.execute(
+                    "UPDATE users SET cap_bac=? WHERE id=?",
+                    (yc["cap_moi"], yc["user_id"]),
+                )
 
                 await context.bot.send_message(
                     chat_id=yc["user_id"],
                     text=f"""✅ <b>NÂNG CẤP THÀNH CÔNG!</b>
 
-🏆 Cấp hiện tại: {yc['cap_moi']}
+🏆 Cấp hiện tại: {h(yc['cap_moi'])}
 📺 Giới hạn: {CAP_BAC_CONFIG[yc['cap_moi']]['gioi_han_xem_ngay']} video/ngày
 💵 Thưởng/video: {CAP_BAC_CONFIG[yc['cap_moi']]['xu_moi_video']:,}đ""",
                     parse_mode="HTML",
                 )
                 await query.edit_message_text(
-                    f"✅ Đã duyệt {ma_nap} → {yc['ten']} lên {yc['cap_moi']}."
+                    f"✅ Đã duyệt {h(ma_nap)} → {h(yc['ten'])} lên {h(yc['cap_moi'])}."
                 )
             else:
                 conn.execute(
-                    "UPDATE deposits SET status='rejected' WHERE request_id=?",
+                    """
+                    UPDATE deposits SET status='rejected'
+                    WHERE request_id=? AND status='pending'
+                    """,
                     (ma_nap,),
                 )
                 await context.bot.send_message(
                     chat_id=yc["user_id"],
                     text=f"""❌ <b>YÊU CẦU NÂNG CẤP BỊ TỪ CHỐI</b>
 
-🔔 Mã: {ma_nap}
+🔔 Mã: {h(ma_nap)}
 Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ trợ.""",
                     parse_mode="HTML",
                 )
-                await query.edit_message_text(f"❌ Đã từ chối {ma_nap}.")
+                await query.edit_message_text(
+                    f"❌ Đã từ chối {h(ma_nap)}."
+                )
         return
 
-    # ---------------- RÚT TIỀN ----------------
+    # --------------------------------------------------------
+    # RÚT TIỀN
+    # --------------------------------------------------------
     if data.startswith("duyet_ok:") or data.startswith("duyet_no:"):
         request_id = data.split(":", 1)[1]
 
-        # Xử lý trong một transaction duy nhất để không thể duyệt/trừ tiền 2 lần.
         with db() as conn:
             conn.execute("BEGIN IMMEDIATE")
             yc = conn.execute(
-                "SELECT * FROM withdrawals WHERE request_id=? AND status='pending'",
+                """
+                SELECT * FROM withdrawals
+                WHERE request_id=? AND status='pending'
+                """,
                 (request_id,),
             ).fetchone()
 
             if not yc:
                 conn.rollback()
-                await query.edit_message_text("❌ Yêu cầu không tồn tại hoặc đã được xử lý.")
+                await query.edit_message_text(
+                    "❌ Yêu cầu không tồn tại hoặc đã được xử lý."
+                )
                 return
 
             if data.startswith("duyet_no:"):
                 changed = conn.execute(
-                    "UPDATE withdrawals SET status='rejected' WHERE request_id=? AND status='pending'",
+                    """
+                    UPDATE withdrawals
+                    SET status='rejected'
+                    WHERE request_id=? AND status='pending'
+                    """,
                     (request_id,),
                 ).rowcount
+
                 if changed != 1:
                     conn.rollback()
-                    await query.edit_message_text("❌ Yêu cầu đã được xử lý bởi thao tác khác.")
+                    await query.edit_message_text(
+                        "❌ Yêu cầu đã được xử lý bởi thao tác khác."
+                    )
                     return
+
                 conn.commit()
 
                 try:
@@ -1075,26 +1383,42 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     )
                 except Exception as exc:
                     print("SEND REJECT NOTICE ERROR:", repr(exc))
-                await query.edit_message_text(f"❌ Đã từ chối {h(request_id)}.")
+
+                await query.edit_message_text(
+                    f"❌ Đã từ chối {h(request_id)}."
+                )
                 return
 
-            # Duyệt: trừ số dư và đổi trạng thái trong cùng transaction.
             changed_balance = conn.execute(
-                "UPDATE users SET so_du = so_du - ? WHERE id=? AND so_du >= ?",
+                """
+                UPDATE users
+                SET so_du = so_du - ?
+                WHERE id=? AND so_du >= ?
+                """,
                 (yc["so_tien"], yc["user_id"], yc["so_tien"]),
             ).rowcount
+
             if changed_balance != 1:
                 conn.rollback()
-                await query.edit_message_text("❌ Số dư hiện tại không đủ để duyệt đơn.")
+                await query.edit_message_text(
+                    "❌ Số dư hiện tại không đủ để duyệt đơn."
+                )
                 return
 
             changed_request = conn.execute(
-                "UPDATE withdrawals SET status='approved' WHERE request_id=? AND status='pending'",
+                """
+                UPDATE withdrawals
+                SET status='approved'
+                WHERE request_id=? AND status='pending'
+                """,
                 (request_id,),
             ).rowcount
+
             if changed_request != 1:
                 conn.rollback()
-                await query.edit_message_text("❌ Yêu cầu đã được xử lý bởi thao tác khác.")
+                await query.edit_message_text(
+                    "❌ Yêu cầu đã được xử lý bởi thao tác khác."
+                )
                 return
 
             conn.commit()
@@ -1119,50 +1443,111 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         )
         return
 
-    # ---------------- DUYỆT TẤT CẢ ĐƠN ----------------
+    # --------------------------------------------------------
+    # DUYỆT TẤT CẢ ĐƠN
+    # --------------------------------------------------------
     if data == "admin_duyet_tat_ca":
         approved_deposits = []
         approved_withdrawals = []
         skipped_withdrawals = []
         skipped_deposits = []
+        approved_verifications = []
 
-        # Xử lý toàn bộ đơn trong transaction để tránh duyệt/trừ tiền một phần.
         with db() as conn:
             conn.execute("BEGIN IMMEDIATE")
 
+            verification_rows = conn.execute(
+                """
+                SELECT * FROM verification_requests
+                WHERE status='pending'
+                ORDER BY thoi_gian ASC
+                """
+            ).fetchall()
+
+            for yc in verification_rows:
+                user = conn.execute(
+                    "SELECT id FROM users WHERE id=?",
+                    (yc["user_id"],),
+                ).fetchone()
+
+                if not user:
+                    continue
+
+                changed = conn.execute(
+                    """
+                    UPDATE verification_requests
+                    SET status='approved'
+                    WHERE request_id=? AND status='pending'
+                    """,
+                    (yc["request_id"],),
+                ).rowcount
+
+                if changed == 1:
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET xac_minh_nguoi_that=1
+                        WHERE id=?
+                        """,
+                        (yc["user_id"],),
+                    )
+                    approved_verifications.append(dict(yc))
+
             deposit_rows = conn.execute(
-                "SELECT * FROM deposits WHERE status='pending' ORDER BY thoi_gian ASC"
+                """
+                SELECT * FROM deposits
+                WHERE status='pending'
+                ORDER BY thoi_gian ASC
+                """
             ).fetchall()
 
             for yc in deposit_rows:
                 user = conn.execute(
-                    "SELECT * FROM users WHERE id=?", (yc["user_id"],)
+                    "SELECT id FROM users WHERE id=?",
+                    (yc["user_id"],),
                 ).fetchone()
+
                 if not user:
                     skipped_deposits.append(yc["request_id"])
                     continue
 
                 changed = conn.execute(
-                    "UPDATE deposits SET status='approved' WHERE request_id=? AND status='pending'",
+                    """
+                    UPDATE deposits
+                    SET status='approved'
+                    WHERE request_id=? AND status='pending'
+                    """,
                     (yc["request_id"],),
                 ).rowcount
+
                 if changed != 1:
                     continue
 
                 conn.execute(
-                    "UPDATE users SET cap_bac=? WHERE id=?",
+                    """
+                    UPDATE users
+                    SET cap_bac=?
+                    WHERE id=?
+                    """,
                     (yc["cap_moi"], yc["user_id"]),
                 )
                 approved_deposits.append(dict(yc))
 
             withdrawal_rows = conn.execute(
-                "SELECT * FROM withdrawals WHERE status='pending' ORDER BY thoi_gian ASC"
+                """
+                SELECT * FROM withdrawals
+                WHERE status='pending'
+                ORDER BY thoi_gian ASC
+                """
             ).fetchall()
 
             for yc in withdrawal_rows:
                 changed_balance = conn.execute(
-                    "UPDATE users SET so_du = so_du - ? "
-                    "WHERE id=? AND so_du >= ?",
+                    """
+                    UPDATE users
+                    SET so_du = so_du - ?
+                    WHERE id=? AND so_du >= ?
+                    """,
                     (yc["so_tien"], yc["user_id"], yc["so_tien"]),
                 ).rowcount
 
@@ -1171,23 +1556,42 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     continue
 
                 changed_request = conn.execute(
-                    "UPDATE withdrawals SET status='approved' "
-                    "WHERE request_id=? AND status='pending'",
+                    """
+                    UPDATE withdrawals
+                    SET status='approved'
+                    WHERE request_id=? AND status='pending'
+                    """,
                     (yc["request_id"],),
                 ).rowcount
 
                 if changed_request == 1:
                     approved_withdrawals.append(dict(yc))
                 else:
-                    # Hoàn lại số dư nếu trạng thái đơn không còn pending.
                     conn.execute(
-                        "UPDATE users SET so_du = so_du + ? WHERE id=?",
+                        """
+                        UPDATE users
+                        SET so_du = so_du + ?
+                        WHERE id=?
+                        """,
                         (yc["so_tien"], yc["user_id"]),
                     )
 
             conn.commit()
 
-        # Gửi thông báo sau khi transaction đã commit.
+        for yc in approved_verifications:
+            try:
+                await context.bot.send_message(
+                    chat_id=yc["user_id"],
+                    text=f"""🛡 <b>XÁC MINH THÀNH CÔNG</b>
+
+✅ Yêu cầu xác minh của bạn đã được Admin duyệt.
+💰 Phí xác minh: {yc['phi']:,}đ
+🔓 Chức năng rút tiền đã được mở khóa.""",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
         for yc in approved_deposits:
             try:
                 await context.bot.send_message(
@@ -1201,8 +1605,8 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     ),
                     parse_mode="HTML",
                 )
-            except Exception as exc:
-                print("SEND BULK DEPOSIT NOTICE ERROR:", repr(exc))
+            except Exception:
+                pass
 
         for yc in approved_withdrawals:
             try:
@@ -1217,36 +1621,34 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     ),
                     parse_mode="HTML",
                 )
-            except Exception as exc:
-                print("SEND BULK WITHDRAW NOTICE ERROR:", repr(exc))
+            except Exception:
+                pass
 
         msg = (
             "✅ <b>ĐÃ DUYỆT TẤT CẢ ĐƠN CÓ THỂ XỬ LÝ</b>\n\n"
+            f"🛡 Xác minh: <b>{len(approved_verifications)}</b> đơn\n"
             f"📥 Nạp/nâng cấp: <b>{len(approved_deposits)}</b> đơn\n"
             f"💸 Rút tiền: <b>{len(approved_withdrawals)}</b> đơn\n"
-            f"⚠️ Rút bị bỏ qua do số dư không đủ: <b>{len(skipped_withdrawals)}</b> đơn\n"
-            f"⚠️ Nạp bị bỏ qua do người dùng không tồn tại: <b>{len(skipped_deposits)}</b> đơn"
+            f"⚠️ Rút bỏ qua do số dư không đủ: <b>{len(skipped_withdrawals)}</b> đơn\n"
+            f"⚠️ Nạp bỏ qua do người dùng không tồn tại: <b>{len(skipped_deposits)}</b> đơn"
         )
 
         if skipped_withdrawals:
             msg += "\n\n💸 <b>CÁC ĐƠN RÚT CHƯA DUYỆT:</b>"
             for yc in skipped_withdrawals[:10]:
-                msg += f"\n• <code>{h(yc['request_id'])}</code> — {yc['so_tien']:,}đ"
+                msg += (
+                    f"\n• <code>{h(yc['request_id'])}</code>"
+                    f" — {yc['so_tien']:,}đ"
+                )
             if len(skipped_withdrawals) > 10:
                 msg += f"\n• ... và {len(skipped_withdrawals) - 10} đơn khác"
 
         await query.edit_message_text(msg, parse_mode="HTML")
         return
 
-    # ---------------- ADMIN ACTIONS ----------------
-    if data == "lien_ket_tai_khoan":
-        await query.answer()
-        context.user_data["dang_lien_ket"] = True
-        await query.edit_message_text(
-            "🔗 Gửi tài khoản theo dạng:\nACB 25607451 NGUYEN VAN A"
-        )
-        return NHAP_TAI_KHOAN
-
+    # --------------------------------------------------------
+    # ADMIN ACTIONS
+    # --------------------------------------------------------
     if data == "admin_cong_tien":
         context.user_data["admin_hanh_dong"] = "cong"
         await query.message.reply_text(
@@ -1281,17 +1683,23 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data == "admin_ds_rut":
         with db() as conn:
             rows = conn.execute(
-                "SELECT * FROM withdrawals WHERE status='pending' ORDER BY thoi_gian DESC"
+                """
+                SELECT * FROM withdrawals
+                WHERE status='pending'
+                ORDER BY thoi_gian DESC
+                """
             ).fetchall()
+
         if not rows:
             await query.message.reply_text("✅ Không có yêu cầu chờ rút.")
             return
+
         text = "📋 <b>DANH SÁCH CHỜ RÚT</b>\n\n"
         for yc in rows:
             text += (
-                f"<code>{yc['request_id']}</code>\n"
-                f"👤 {yc['ten']} | 💵 {yc['so_tien']:,}đ\n"
-                f"🔗 {yc['tai_khoan']}\n\n"
+                f"<code>{h(yc['request_id'])}</code>\n"
+                f"👤 {h(yc['ten'])} | 💵 {yc['so_tien']:,}đ\n"
+                f"🔗 {h(yc['tai_khoan'])}\n\n"
             )
         await query.message.reply_text(text, parse_mode="HTML")
         return
@@ -1299,17 +1707,52 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data == "admin_ds_nap":
         with db() as conn:
             rows = conn.execute(
-                "SELECT * FROM deposits WHERE status='pending' ORDER BY thoi_gian DESC"
+                """
+                SELECT * FROM deposits
+                WHERE status='pending'
+                ORDER BY thoi_gian DESC
+                """
             ).fetchall()
+
         if not rows:
             await query.message.reply_text("✅ Không có yêu cầu chờ nạp.")
             return
+
         text = "📋 <b>DANH SÁCH CHỜ NẠP/NÂNG CẤP</b>\n\n"
         for yc in rows:
             text += (
-                f"<code>{yc['request_id']}</code>\n"
-                f"👤 {yc['ten']} | {yc['gia']:,}đ → {yc['cap_moi']}\n\n"
+                f"<code>{h(yc['request_id'])}</code>\n"
+                f"👤 {h(yc['ten'])} | {yc['gia']:,}đ → {h(yc['cap_moi'])}\n\n"
             )
+        await query.message.reply_text(text, parse_mode="HTML")
+        return
+
+    if data == "admin_ds_xacminh":
+        with db() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM verification_requests
+                WHERE status='pending'
+                ORDER BY thoi_gian DESC
+                """
+            ).fetchall()
+
+        if not rows:
+            await query.message.reply_text(
+                "✅ Không có yêu cầu xác minh đang chờ."
+            )
+            return
+
+        text = "🛡 <b>DANH SÁCH CHỜ XÁC MINH</b>\n\n"
+        for yc in rows:
+            text += (
+                f"📋 <code>{h(yc['request_id'])}</code>\n"
+                f"🆔 ID: <code>{yc['user_id']}</code>\n"
+                f"👤 {h(yc['ten'])}\n"
+                f"💰 Phí: {yc['phi']:,}đ\n"
+                f"📅 {h(yc['thoi_gian'])}\n\n"
+            )
+
         await query.message.reply_text(text, parse_mode="HTML")
         return
 
@@ -1318,11 +1761,13 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         if not rows:
             await query.message.reply_text("Chưa có người dùng.")
             return
+
         text = "👥 <b>DANH SÁCH NGƯỜI DÙNG</b>\n\n"
         for u in rows[:100]:
+            xac = "✅" if u.get("xac_minh_nguoi_that", 0) else "🔒"
             text += (
-                f"🆔 {u['id']} | {u['ten']}\n"
-                f"💰 {u['so_du']:,}đ | {u['cap_bac']}\n\n"
+                f"🆔 {u['id']} | {h(u['ten'])}\n"
+                f"💰 {u['so_du']:,}đ | {h(u['cap_bac'])} | {xac}\n\n"
             )
         await query.message.reply_text(text, parse_mode="HTML")
 
@@ -1336,13 +1781,21 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "cong_tat_ca":
         try:
-            so_tien = int(text.replace(".", "").replace(",", "").replace("đ", "").strip())
+            so_tien = int(
+                text.replace(".", "").replace(",", "").replace("đ", "").strip()
+            )
         except ValueError:
-            await update.message.reply_text("❌ Số tiền không hợp lệ.", reply_markup=menu_chinh(ADMIN_ID))
+            await update.message.reply_text(
+                "❌ Số tiền không hợp lệ.",
+                reply_markup=menu_chinh(ADMIN_ID),
+            )
             return ConversationHandler.END
 
         if so_tien <= 0:
-            await update.message.reply_text("❌ Số tiền phải > 0.", reply_markup=menu_chinh(ADMIN_ID))
+            await update.message.reply_text(
+                "❌ Số tiền phải > 0.",
+                reply_markup=menu_chinh(ADMIN_ID),
+            )
             return ConversationHandler.END
 
         rows = all_users()
@@ -1352,7 +1805,10 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
                 new_balance = get_user(u["id"])["so_du"]
                 await context.bot.send_message(
                     chat_id=u["id"],
-                    text=f"💰 Hệ thống cộng +{so_tien:,}đ\n💵 Số dư mới: {new_balance:,}đ",
+                    text=(
+                        f"💰 Hệ thống cộng +{so_tien:,}đ\n"
+                        f"💵 Số dư mới: {new_balance:,}đ"
+                    ),
                 )
             except Exception:
                 pass
@@ -1367,7 +1823,9 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         uid_s, amount_s = text.split()
         uid = int(uid_s)
-        amount = int(amount_s.replace(".", "").replace(",", "").replace("đ", ""))
+        amount = int(
+            amount_s.replace(".", "").replace(",", "").replace("đ", "")
+        )
     except (ValueError, TypeError):
         await update.message.reply_text(
             "❌ Định dạng: 123456789 500000",
@@ -1377,24 +1835,36 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
 
     u = get_user(uid)
     if not u:
-        await update.message.reply_text("❌ Người dùng không tồn tại.", reply_markup=menu_chinh(ADMIN_ID))
+        await update.message.reply_text(
+            "❌ Người dùng không tồn tại.",
+            reply_markup=menu_chinh(ADMIN_ID),
+        )
         return ConversationHandler.END
 
     if amount <= 0:
-        await update.message.reply_text("❌ Số tiền phải > 0.", reply_markup=menu_chinh(ADMIN_ID))
+        await update.message.reply_text(
+            "❌ Số tiền phải > 0.",
+            reply_markup=menu_chinh(ADMIN_ID),
+        )
         return ConversationHandler.END
 
     if action == "cong":
         update_balance(uid, amount)
         new_balance = get_user(uid)["so_du"]
+
         await update.message.reply_text(
-            f"✅ Đã cộng +{amount:,}đ cho {uid}.\n💵 Số dư mới: {new_balance:,}đ",
+            f"✅ Đã cộng +{amount:,}đ cho {uid}.\n"
+            f"💵 Số dư mới: {new_balance:,}đ",
             reply_markup=menu_chinh(ADMIN_ID),
         )
+
         try:
             await context.bot.send_message(
                 chat_id=uid,
-                text=f"💰 Bạn được cộng +{amount:,}đ.\n💵 Số dư mới: {new_balance:,}đ",
+                text=(
+                    f"💰 Bạn được cộng +{amount:,}đ.\n"
+                    f"💵 Số dư mới: {new_balance:,}đ"
+                ),
             )
         except Exception:
             pass
@@ -1409,14 +1879,20 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
 
         update_balance(uid, -amount)
         new_balance = get_user(uid)["so_du"]
+
         await update.message.reply_text(
-            f"✅ Đã trừ -{amount:,}đ của {uid}.\n💵 Số dư mới: {new_balance:,}đ",
+            f"✅ Đã trừ -{amount:,}đ của {uid}.\n"
+            f"💵 Số dư mới: {new_balance:,}đ",
             reply_markup=menu_chinh(ADMIN_ID),
         )
+
         try:
             await context.bot.send_message(
                 chat_id=uid,
-                text=f"💸 Tài khoản bị trừ -{amount:,}đ.\n💵 Số dư mới: {new_balance:,}đ",
+                text=(
+                    f"💸 Tài khoản bị trừ -{amount:,}đ.\n"
+                    f"💵 Số dư mới: {new_balance:,}đ"
+                ),
             )
         except Exception:
             pass
@@ -1437,7 +1913,7 @@ async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 chat_id=u["id"],
-                text=f"📢 <b>THÔNG BÁO HỆ THỐNG</b>\n\n{noi_dung}",
+                text=f"📢 <b>THÔNG BÁO HỆ THỐNG</b>\n\n{h(noi_dung)}",
                 parse_mode="HTML",
             )
             thanh_cong += 1
@@ -1479,18 +1955,24 @@ def build_application():
     # Conversation: nạp tiền
     nap_conv = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(xu_ly_goi_nang_cap, pattern=r"^goi_(bac|vang|bachkim|kimcuong)$"),
-            CallbackQueryHandler(da_chuyen_khoan_callback, pattern=r"^dachuyen:.+$"),
+            CallbackQueryHandler(
+                xu_ly_goi_nang_cap,
+                pattern=r"^goi_(bac|vang|bachkim|kimcuong)$",
+            ),
+            CallbackQueryHandler(
+                da_chuyen_khoan_callback,
+                pattern=r"^dachuyen:.+$",
+            ),
         ],
         states={
             NAP_GUI_ANH: [
-                MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), nhan_anh_chuyen_khoan),
+                MessageHandler(
+                    filters.PHOTO | (filters.TEXT & ~filters.COMMAND),
+                    nhan_anh_chuyen_khoan,
+                ),
             ],
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex(r"^❌ Hủy$"), cancel),
-        ],
+        fallbacks=[CommandHandler("cancel", cancel)],
         per_user=True,
         per_chat=True,
         allow_reentry=True,
@@ -1499,12 +1981,21 @@ def build_application():
     # Conversation: rút tiền / liên kết tài khoản
     rut_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^💰 Rút Tiền$"), rut_tien_bat_dau),
-            CallbackQueryHandler(lien_ket_tai_khoan_bat_dau, pattern=r"^lien_ket_tai_khoan$"),
+            MessageHandler(
+                filters.Regex(r"^💰 Rút Tiền$"),
+                rut_tien_bat_dau,
+            ),
+            CallbackQueryHandler(
+                lien_ket_tai_khoan_bat_dau,
+                pattern=r"^lien_ket_tai_khoan$",
+            ),
         ],
         states={
             NHAP_TAI_KHOAN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_thong_tin_tai_khoan),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    nhap_thong_tin_tai_khoan,
+                ),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -1516,20 +2007,35 @@ def build_application():
     # Conversation: admin
     admin_conv = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(xu_ly_admin_callback, pattern=r"^admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb)$"),
+            CallbackQueryHandler(
+                xu_ly_admin_callback,
+                pattern=r"^admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb)$",
+            ),
         ],
         states={
             ADMIN_CONG_SO_DU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_cong_tru,
+                ),
             ],
             ADMIN_TRU_SO_DU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_cong_tru,
+                ),
             ],
             ADMIN_CONG_TAT_CA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_cong_tru,
+                ),
             ],
             ADMIN_GUI_TB: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_gui_tb,
+                ),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -1538,17 +2044,40 @@ def build_application():
         allow_reentry=True,
     )
 
-    # Callback duyệt đơn được đăng ký ở group 0, trước ConversationHandler.
-    # Điều này đảm bảo nút DUYỆT/TỪ CHỐI của admin luôn được bắt đúng.
+    # Callback Admin: duyệt đơn, xác minh, danh sách, duyệt tất cả.
     app.add_handler(
         CallbackQueryHandler(
             xu_ly_admin_callback,
-            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no):.+$|^(admin_ds_(rut|nap|nguoi)|admin_duyet_tat_ca)$",
+            pattern=(
+                r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no|"
+                r"xacminh_ok|xacminh_no):.+$|"
+                r"^(admin_ds_(rut|nap|xacminh|nguoi)|admin_duyet_tat_ca)$"
+            ),
         ),
         group=0,
     )
+
     app.add_handler(
-        CallbackQueryHandler(nhan_thuong_callback, pattern=r"^nhan_thuong:.+$"),
+        CallbackQueryHandler(
+            nhan_thuong_callback,
+            pattern=r"^nhan_thuong:.+$",
+        ),
+        group=0,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            xac_minh_nguoi_that_callback,
+            pattern=r"^xac_minh_nguoi_that$",
+        ),
+        group=0,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            rut_bi_khoa_callback,
+            pattern=r"^rut_bi_khoa$",
+        ),
         group=0,
     )
 
@@ -1559,13 +2088,27 @@ def build_application():
     app.add_handler(rut_conv, group=1)
     app.add_handler(admin_conv, group=1)
 
-    app.add_handler(MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so))
-    app.add_handler(MessageHandler(filters.Regex(r"^🔍 Xem TikTok$"), xem_tiktok))
-    app.add_handler(MessageHandler(filters.Regex(r"^👥 Khu Vực Leader$"), khu_vuc_leader))
-    app.add_handler(MessageHandler(filters.Regex(r"^👑 Nâng Cấp Bậc$"), nang_cap))
-    app.add_handler(MessageHandler(filters.Regex(r"^🎧 Hỗ Trợ$"), ho_tro))
-    app.add_handler(MessageHandler(filters.Regex(r"^🔐 Nhập CaptCha$"), captcha))
-    app.add_handler(MessageHandler(filters.Regex(r"^🎛 QUẢN LÝ ADMIN$"), trang_quan_ly_admin))
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^🔍 Xem TikTok$"), xem_tiktok)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^👥 Khu Vực Leader$"), khu_vuc_leader)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^👑 Nâng Cấp Bậc$"), nang_cap)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^🎧 Hỗ Trợ$"), ho_tro)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^🔐 Nhập CaptCha$"), captcha)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^🎛 QUẢN LÝ ADMIN$"), trang_quan_ly_admin)
+    )
 
     app.add_error_handler(error_handler)
     return app
@@ -1574,13 +2117,10 @@ def build_application():
 async def run_bot():
     application = build_application()
 
-    # Khởi tạo Bot trước khi gọi API.
     await application.initialize()
-
-    # Xóa webhook cũ và bỏ update tồn đọng trước khi polling.
-    # Lưu ý: Telegram chỉ cho phép MỘT tiến trình dùng getUpdates cho một bot token.
     await application.bot.delete_webhook(drop_pending_updates=True)
     await application.start()
+
     try:
         await application.updater.start_polling(
             allowed_updates=Update.ALL_TYPES,
