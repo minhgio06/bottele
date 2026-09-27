@@ -876,3 +876,4 @@ def main():
     print("🔄 Đang khởi động BOT...")
     
     token = os.get
+       main()
