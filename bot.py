@@ -853,19 +853,4 @@ async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 chat_id=uid,
-                text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
-
-{noi_dung}""",
-                parse_mode="HTML"
-            )
-            thanh_cong += 1
-        except: pass
-    await update.message.reply_text(
-        f"✅ Đã gửi thông báo cho {thanh_cong}/{len(users)} người dùng!",
-        reply_markup=menu_chinh(u_id)
-    )
-    return ConversationHandler.END
-
-async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text("❌ Đã hủy.", reply_markup=menu_chinh(update.e
+                text=f"""📢 <b>THÔNG BÁ
