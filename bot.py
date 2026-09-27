@@ -85,7 +85,7 @@ def init_user(user_id, ten, ref_by=None):
             "ngay_vao": datetime.now().strftime("%d/%m/%Y"),
             "captcha_da_xac_minh": False, "ngay_reset": datetime.now().strftime("%d/%m/%Y"),
             "dang_xem": False,
-            "tai_khoan": None  # Lưu thông tin tài khoản rút tiền
+            "tai_khoan": None
         }
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
@@ -128,7 +128,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🚀 Tham gia kênh trước:\n🔗 https://t.me/{KENH_YEU_CAU.replace('@','')}\nSau đó gõ /start")
         return
     await update.message.reply_text(
-        f"🎉 CHÀO MỪNG BẠN TRỞ LẠI!\n\nVui lòng chọn chức năng:",
+        "🎉 CHÀO MỪNG BẠN TRỞ LẠI!\n\nVui lòng chọn chức năng:",
         reply_markup=menu_chinh(u.id)
     )
 
@@ -409,7 +409,7 @@ async def captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=menu_chinh(update.effective_user.id)
     )
 
-# === PHẦN RÚT TIỀN — THEO GIAO DIỆN ẢNH ===
+# === PHẦN RÚT TIỀN ===
 async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
@@ -437,7 +437,6 @@ Yêu cầu tối thiểu: {RUT_TOI_THIEU:,}đ""",
         )
         return
     
-    # Đã có tài khoản & đủ tiền → tiếp tục nhập số tiền
     context.user_data["dang_rut_tien"] = True
     await update.message.reply_text(
         f"""💰 RÚT TIỀN
@@ -477,43 +476,40 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
     u_id = update.effective_user.id
     text = update.effective_message.text.strip()
     
-    # Kiểm tra định dạng: ít nhất 3 phần
-    parts = text.split()
-    if len(parts) < 3:
-        await update.message.reply_text(
-            """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
+    if context.user_data.get("dang_lien_ket"):
+        parts = text.split()
+        if len(parts) < 3:
+            await update.message.reply_text(
+                """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
 
 Chỉ chấp nhận định dạng:
 MOMO 082682967 NGUYEN VAN A
 
 Ví dụ trên là hợp lệ.
 Không nhập dấu + hoặc ký tự đặc biệt.""",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return NHAP_TAI_KHOAN
-    
-    # Kiểm tra phần số tài khoản có phải là số không
-    loai_tk = parts[0].upper()
-    so_tk = parts[1]
-    ten_chu = " ".join(parts[2:]).upper()
-    
-    if not so_tk.isdigit():
-        await update.message.reply_text(
-            """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
+                reply_markup=ReplyKeyboardRemove()
+            )
+            return NHAP_TAI_KHOAN
+        
+        loai_tk = parts[0].upper()
+        so_tk = parts[1]
+        ten_chu = " ".join(parts[2:]).upper()
+        
+        if not so_tk.isdigit():
+            await update.message.reply_text(
+                """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
 
 Chỉ chấp nhận định dạng:
 MOMO 082682967 NGUYEN VAN A
 
 Số tài khoản chỉ gồm chữ số, không dấu + hay chữ cái.""",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return NHAP_TAI_KHOAN
-    
-    # Lưu thông tin tài khoản
-    tk_hoan_hao = f"{loai_tk} {so_tk} {ten_chu}"
-    users[u_id]["tai_khoan"] = tk_hoan_hao
-    
-    if context.user_data.get("dang_lien_ket"):
+                reply_markup=ReplyKeyboardRemove()
+            )
+            return NHAP_TAI_KHOAN
+        
+        tk_hoan_hao = f"{loai_tk} {so_tk} {ten_chu}"
+        users[u_id]["tai_khoan"] = tk_hoan_hao
+        
         context.user_data.pop("dang_lien_ket", None)
         await update.message.reply_text(
             f"""✅ LIÊN KẾT TÀI KHOẢN THÀNH CÔNG!
@@ -525,30 +521,19 @@ Bây giờ bạn có thể rút tiền nhé!""",
         )
         return ConversationHandler.END
     
-    # Nếu đang trong quá trình rút tiền
+    # Đang nhập số tiền rút
     try:
         so_tien = int(text.replace(".", "").replace("đ", "").strip())
     except:
-        await update.message.reply_text(
-            "Vui lòng nhập số tiền rút:", reply_markup=ReplyKeyboardRemove()
-        )
+        await update.message.reply_text("Vui lòng nhập số tiền hợp lệ:", reply_markup=ReplyKeyboardRemove())
         return NHAP_TAI_KHOAN
     
-    return await xu_ly_so_tien_rut(update, context, so_tien)
-
-async def xu_ly_so_tien_rut(update: Update, context: ContextTypes.DEFAULT_TYPE, so_tien):
-    u_id = update.effective_user.id
     u = users[u_id]
-    
     if so_tien < RUT_TOI_THIEU:
-        await update.message.reply_text(
-            f"❌ Tối thiểu rút {RUT_TOI_THIEU:,}đ!", reply_markup=ReplyKeyboardRemove()
-        )
+        await update.message.reply_text(f"❌ Tối thiểu rút {RUT_TOI_THIEU:,}đ!", reply_markup=ReplyKeyboardRemove())
         return NHAP_TAI_KHOAN
     if so_tien > u["so_du"]:
-        await update.message.reply_text(
-            "❌ Số tiền vượt quá số dư!", reply_markup=ReplyKeyboardRemove()
-        )
+        await update.message.reply_text("❌ Số tiền vượt quá số dư!", reply_markup=ReplyKeyboardRemove())
         return NHAP_TAI_KHOAN
     
     yeu_cau_id = f"RUT{u_id}{int(datetime.now().timestamp())}"
@@ -782,7 +767,7 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
             return ConversationHandler.END
         
         dem = 0
-        for uid in users:
+        for uid in list(users.keys()):
             users[uid]["so_du"] += so_tien
             dem += 1
             try:
@@ -866,6 +851,26 @@ async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE)
     thanh_cong = 0
     for uid in list(users.keys()):
         try:
-            await context.bot.send_message(chat_id=uid, text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
+            await context.bot.send_message(
+                chat_id=uid,
+                text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
 
-{noi
+{noi_dung}""",
+                parse_mode="HTML"
+            )
+            thanh_cong += 1
+        except: pass
+    await update.message.reply_text(
+        f"✅ Đã gửi thông báo cho {thanh_cong}/{len(users)} người dùng!",
+        reply_markup=menu_chinh(u_id)
+    )
+    return ConversationHandler.END
+
+async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("❌ Đã hủy.", reply_markup=menu_chinh(update.effective_user.id))
+    return ConversationHandler.END
+
+# === KHAI BÁO HANDLER & CHẠY BOT ===
+def main():
+    print("🔄 Đang khởi động BOT...")
