@@ -377,7 +377,7 @@ def nut_kiem_tra_kenh():
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 THAM GIA KÊNH", url=link)],
-        [InlineKeyboardButton("✅ TÔI ĐÃ THAM GIA — KIỂM TRA", callback_data="kiem_tra_kenh")],
+        [InlineKeyboardButton("🔎 KIỂM TRA ĐÃ THAM GIA CHƯA", callback_data="kiem_tra_kenh")],
     ])
 
 
@@ -398,7 +398,7 @@ async def yeu_cau_tham_gia_kenh(update: Update, context: ContextTypes.DEFAULT_TY
         "🚀 <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
         "1️⃣ Bấm <b>THAM GIA KÊNH</b>\n"
         "2️⃣ Tham gia kênh\n"
-        "3️⃣ Quay lại bot và bấm <b>TÔI ĐÃ THAM GIA — KIỂM TRA</b>",
+        "3️⃣ Quay lại bot và bấm <b>KIỂM TRA ĐÃ THAM GIA CHƯA</b>",
         parse_mode="HTML",
         reply_markup=nut_kiem_tra_kenh(),
     )
@@ -450,7 +450,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await kt_kenh(u.id, context):
         await update.message.reply_text(
-            "🚀 <b>Hãy tham gia kênh trước</b> rồi bấm nút kiểm tra bên dưới.",
+            "🚀 <b>Hãy tham gia kênh trước</b> rồi bấm <b>KIỂM TRA ĐÃ THAM GIA CHƯA</b> bên dưới.",
             parse_mode="HTML",
             reply_markup=nut_kiem_tra_kenh(),
         )
