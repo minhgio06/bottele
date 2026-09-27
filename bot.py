@@ -11,6 +11,9 @@ from telegram.ext import (
 BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"
 ADMIN_ID = 6163458267
 KENH_YEU_CAU = None
+
+# ✅ LINK MỚI THEO YÊU CẦU
+LINK_VIDEO = "https://t.me/cayxuonline_bot"
 # ========================================
 
 users = {}
@@ -23,9 +26,6 @@ CAP_BAC_CONFIG = {
 }
 HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 
-# Link video mẫu — bạn có thể thay đổi hoặc tạo ngẫu nhiên
-LINK_VIDEO_MAU = "https://www.tiktok.com/@tiktok/video/1234567890123456789"
-
 def init_user(user_id, ten, ref_by=None):
     if user_id not in users:
         users[user_id] = {
@@ -33,7 +33,7 @@ def init_user(user_id, ten, ref_by=None):
             "video_da_xem": 0, "video_ngay": 0, "gioi_thieu": 0, "ref_by": ref_by,
             "ngay_vao": datetime.now().strftime("%d/%m/%Y"),
             "captcha_da_xac_minh": False, "ngay_reset": datetime.now().strftime("%d/%m/%Y"),
-            "dang_xem": False  # Đang trong quá trình xem chờ nhận tiền
+            "dang_xem": False
         }
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
@@ -66,21 +66,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🚀 Tham gia kênh trước:\n🔗 https://t.me/{KENH_YEU_CAU.replace('@','')}\nSau đó gõ /start")
         return
     await update.message.reply_text(
-        f"👋 Xin chào {u.first_name}!\n\n✨ TikTop View — Tăng lượt xem TikTok ✨\n👇 Chọn chức năng bên dưới:",
+        f"👋 Xin chào {u.first_name}!\n\n✨ CÀY ẢO RÚT THẬT ✨\n👇 Chọn chức năng bên dưới:",
         reply_markup=menu_chinh()
     )
 
 async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = users[update.effective_user.id]
-    await update.message.reply_text(f"""👤 <b>HỒ SƠ</b>
+    await update.message.reply_text(f"""👤 <b>HỒ SƠ CỦA BẠN</b>
+
 🆔 ID: <code>{u['id']}</code>
 👤 Tên: {u['ten']}
 👑 Cấp bậc: {u['cap_bac']}
 💰 Số dư: {u['so_du']:,}đ
+
+👥 Người giới thiệu: {u['gioi_thieu']}
+🏆 Cấp bậc Leader: Thành viên
+
 🔍 Video đã xem: {u['video_da_xem']}
 📅 Tham gia: {u['ngay_vao']}""", parse_mode="HTML", reply_markup=menu_chinh())
 
-# ========== ✅ XEM TIKTOK — ĐÚNG QUY TRÌNH MỚI ==========
+# ========== ✅ XEM VIDEO — ĐÚNG QUY TRÌNH ==========
 async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
@@ -101,25 +106,23 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gioi_han = CAP_BAC_CONFIG[u["cap_bac"]]["gioi_han_xem_ngay"]
     if u["video_ngay"] >= gioi_han:
         await update.message.reply_text(
-            f"⏳ Đã hết lượt xem hôm nay!\nXem tối đa: {gioi_han} video/ngày\nNâng cấp để xem nhiều hơn!",
+            f"⏳ Đã hết lượt xem hôm nay!\nXem tối đa: {gioi_han} video/ngày\nNâng cấp gói để xem nhiều hơn!",
             reply_markup=menu_chinh()
         )
         return
 
-    # Bắt đầu quy trình xem
     u["dang_xem"] = True
     tien_duoc = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
 
-    # Gửi link + nút bắt đầu
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Mở Link Xem Video", url=https://t.me/cayxuonline_bot)],
+        [InlineKeyboardButton("▶️ Mở Link Xem Video", url=LINK_VIDEO)],
         [InlineKeyboardButton("✅ Đã Xem Xong — Nhận Tiền", callback_data=f"nhan_tien:{u_id}")]
     ])
 
     await update.message.reply_text(
         f"""🎬 <b>XEM VIDEO KIẾM TIỀN</b>
 
-📌 Bước 1: Nhấn link dưới đây mở video
+📌 Bước 1: Nhấn link dưới đây mở xem
 📌 Bước 2: Xem đủ <b>15 giây</b>
 📌 Bước 3: Nhấn nút <b>Nhận Tiền</b>
 
@@ -128,7 +131,7 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=keyboard
     )
 
-# ========== ✅ NHẬN TIỀN SAU KHI XEM ==========
+# ========== NHẬN TIỀN ==========
 async def nhan_tien_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -140,7 +143,6 @@ async def nhan_tien_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     u_id = int(data.split(":")[1])
     user_id_hien_tai = update.effective_user.id
 
-    # Chỉ chính chủ nhận được
     if u_id != user_id_hien_tai:
         await query.answer("❌ Đây không phải phiên của bạn!", show_alert=True)
         return
@@ -150,16 +152,14 @@ async def nhan_tien_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("❌ Phiên đã hết hạn, nhấn [Xem TikTok] lại!", show_alert=True)
         return
 
-    # Tính tiền
     tien_duoc = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
     gioi_han = CAP_BAC_CONFIG[u["cap_bac"]]["gioi_han_xem_ngay"]
 
     u["video_da_xem"] += 1
     u["video_ngay"] += 1
     u["so_du"] += tien_duoc
-    u["dang_xem"] = False  # Kết thúc phiên
+    u["dang_xem"] = False
 
-    # Thưởng giới thiệu cấp 1
     if u["ref_by"] and u["ref_by"] in users:
         users[u["ref_by"]]["so_du"] += int(tien_duoc * HOA_HONG["f1"])
 
@@ -179,31 +179,53 @@ async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = users[u_id]
     link = f"https://t.me/{update.get_bot().username}?start={u_id}"
     await update.message.reply_text(f"""👥 <b>KHU VỰC LEADER</b>
+
 🏆 Cấp hiện tại: {u['cap_bac']}
 👥 Người giới thiệu: {u['gioi_thieu']}
-💰 Hoa hồng: F1=3% | F2=2% | F3=1%
-🔗 Link của bạn: <code>{link}</code>""", parse_mode="HTML", reply_markup=menu_chinh())
+
+💰 HOA HỒNG XEM VIDEO CẤP DƯỚI
+F1: 3% | F2: 2% | F3: 1%
+
+🔗 LINK GIỚI THIỆU CỦA BẠN:
+<code>{link}</code>""", parse_mode="HTML", reply_markup=menu_chinh())
 
 async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👑 <b>NÂNG CẤP BẬC</b>\n1️⃣ Gói Bạc 125.000đ\n2️⃣ Gói Vàng 250.000đ\n3️⃣ Gói Bạch Kim 1.000.000đ\n4️⃣ Gói Kim Cương 2.000.000đ\nNhập số chọn gói:",
+        "👑 <b>NÂNG CẤP BẬC</b>\n\n"
+        "1️⃣ Gói Bạc — 125.000đ\n"
+        "2️⃣ Gói Vàng — 250.000đ\n"
+        "3️⃣ Gói Bạch Kim — 1.000.000đ\n"
+        "4️⃣ Gói Kim Cương — 2.000.000đ\n\n"
+        "Nhập số 1-4 để chọn gói:",
         parse_mode="HTML", reply_markup=menu_chinh()
     )
 
 async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎧 Hỗ trợ: @Admin_TikTopView\n⏰ 8h-22h hàng ngày", parse_mode="HTML", reply_markup=menu_chinh())
+    await update.message.reply_text(
+        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @Admin\n⏰ 8:00 - 22:00 hàng ngày",
+        parse_mode="HTML", reply_markup=menu_chinh()
+    )
 
 async def captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = users[update.effective_user.id]
     u["captcha_da_xac_minh"] = True
-    await update.message.reply_text("✅ Xác minh thành công! Bắt đầu xem video kiếm tiền nhé!", parse_mode="HTML", reply_markup=menu_chinh())
+    await update.message.reply_text(
+        "✅ <b>Đã xác minh thành công!</b>\nBây giờ có thể xem video kiếm tiền rồi nhé!",
+        parse_mode="HTML", reply_markup=menu_chinh()
+    )
 
 async def rut_tien(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = users[update.effective_user.id]
     if u["so_du"] >= 100000:
-        await update.message.reply_text(f"💰 RÚT TIỀN\nSố dư: {u['so_du']:,}đ\nTối thiểu: 100.000đ\nNhập thông tin ngân hàng:", parse_mode="HTML", reply_markup=menu_chinh())
+        await update.message.reply_text(
+            f"💰 <b>RÚT TIỀN</b>\n\nSố dư: {u['so_du']:,}đ\nTối thiểu rút: 100.000đ\n\nNhập thông tin ngân hàng:",
+            parse_mode="HTML", reply_markup=menu_chinh()
+        )
     else:
-        await update.message.reply_text(f"💰 RÚT TIỀN\nChưa đủ điều kiện!\nHiện có: {u['so_du']:,}đ\nCần ít nhất: 100.000đ", parse_mode="HTML", reply_markup=menu_chinh())
+        await update.message.reply_text(
+            f"💰 <b>RÚT TIỀN</b>\n\nSố dư không đủ!\nHiện có: {u['so_du']:,}đ\nCần ít nhất: 100.000đ",
+            parse_mode="HTML", reply_markup=menu_chinh()
+        )
 
 async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
@@ -217,11 +239,13 @@ async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🎧 Hỗ Trợ": await ho_tro(update, context)
     elif text == "🔐 Nhập CaptCha": await captcha(update, context)
     elif text == "💰 Rút Tiền": await rut_tien(update, context)
-    else: await update.message.reply_text("❌ Chọn nút bên dưới!", reply_markup=menu_chinh())
+    else: await update.message.reply_text("❌ Vui lòng chọn nút bên dưới!", reply_markup=menu_chinh())
 
 def main():
     print("="*50)
-    print("🤖 BOT ĐANG KHỞI ĐỘNG...")
+    print("🤖 CÀY ẢO RÚT THẬT — ĐANG KHỞI ĐỘNG...")
+    print(f"✅ Link video: {LINK_VIDEO}")
+    print("="*50)
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(nhan_tien_callback, pattern=r"^nhan_tien:"))
