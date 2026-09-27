@@ -1,7 +1,6 @@
 import os
-import random
-from datetime import datetime
 import asyncio
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, filters,
@@ -9,11 +8,12 @@ from telegram.ext import (
 )
 
 # ===================== CẤU HÌNH =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
-ADMIN_ID = 6163458267
-KENH_YEU_CAU = None
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6163458267"))
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU")
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
 RUT_TOI_THIEU = 50000
+
 # Trạng thái hội thoại
 NHAP_TAI_KHOAN = range(1)
 ADMIN_CONG_SO_DU, ADMIN_TRU_SO_DU, ADMIN_GUI_TB, ADMIN_CONG_TAT_CA = range(10, 14)
@@ -84,8 +84,7 @@ def init_user(user_id, ten, ref_by=None):
             "video_da_xem": 0, "video_ngay": 0, "gioi_thieu": 0, "ref_by": ref_by,
             "ngay_vao": datetime.now().strftime("%d/%m/%Y"),
             "captcha_da_xac_minh": False, "ngay_reset": datetime.now().strftime("%d/%m/%Y"),
-            "dang_xem": False,
-            "tai_khoan": None
+            "dang_xem": False, "tai_khoan": None
         }
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
@@ -514,7 +513,6 @@ Bây giờ bạn có thể rút tiền nhé!""",
         )
         return ConversationHandler.END
     
-    # Đang nhập số tiền rút
     try:
         so_tien = int(text.replace(".", "").replace("đ", "").strip())
     except:
@@ -864,9 +862,4 @@ async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "❌ Đã hủy.",
-        reply_markup=menu_chinh(update.effective_user.id)
-    )
-    return ConversationHandler.END
-
-# === KHA
+        "❌ Đã hủy
