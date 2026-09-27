@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 # ============= THAY THÔNG TIN CỦA BẠN Ở ĐÂY =============
-BOT_TOKEN = "AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"       # Thay bằng Token từ @BotFather
+BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"       # Thay bằng Token từ @BotFather
 ADMIN_ID = 6163458267              # Thay bằng số ID từ @getmyid_bot
 # ==========================================================
 
