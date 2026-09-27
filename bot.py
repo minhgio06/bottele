@@ -873,10 +873,4 @@ def main():
     
     token = BOT_TOKEN
     if not token:
-        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
-        return
-    
-    application = ApplicationBuilder().token(token).build()
-
-    # Handler hội thoại
-    rut_tien
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!
