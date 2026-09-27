@@ -459,9 +459,8 @@ async def lien_ket_tai_khoan_bat_dau(update: Update, context: ContextTypes.DEFAU
 Vui lòng gửi thông tin tài khoản nhận tiền.
 
 ✅ Định dạng đúng:
-MOMO 082682967 NGUYEN VAN A
-BIDV 123456789 NGUYEN VAN A
-VIETCOMBANK 987654321 NGUYEN VAN B
+MOMO 0396037105 NGUYEN VAN A
+ACB 25607451 NGUYEN VAN A
 
 ⚠️ Lưu ý:
 • Không dùng dấu +, -, hoặc ký tự đặc biệt
@@ -483,7 +482,7 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
                 """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
 
 Chỉ chấp nhận định dạng:
-MOMO 082682967 NGUYEN VAN A
+MOMO 0396037105 NGUYEN VAN A
 
 Ví dụ trên là hợp lệ.
 Không nhập dấu + hoặc ký tự đặc biệt.""",
@@ -500,7 +499,7 @@ Không nhập dấu + hoặc ký tự đặc biệt.""",
                 """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
 
 Chỉ chấp nhận định dạng:
-MOMO 082682967 NGUYEN VAN A
+MOMO 0396037105 NGUYEN VAN A
 
 Số tài khoản chỉ gồm chữ số, không dấu + hay chữ cái.""",
                 reply_markup=ReplyKeyboardRemove()
@@ -846,11 +845,116 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
-    if u_id != ADMIN_ID: return
+    if u_id != ADMIN_ID:
+        return
     noi_dung = update.effective_message.text
     thanh_cong = 0
     for uid in list(users.keys()):
         try:
             await context.bot.send_message(
                 chat_id=uid,
-                text=f"""📢 <b>THÔNG BÁ
+                text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
+
+{noi_dung}""",
+                parse_mode="HTML"
+            )
+            thanh_cong += 1
+        except Exception:
+            pass
+    await update.message.reply_text(
+        f"✅ Đã gửi thông báo cho {thanh_cong}/{len(users)} người dùng!",
+        reply_markup=menu_chinh(u_id)
+    )
+    return ConversationHandler.END
+
+async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text(
+        "❌ Đã hủy.",
+        reply_markup=menu_chinh(update.effective_user.id)
+    )
+    return ConversationHandler.END
+
+# === KHAI BÁO HANDLER & CHẠY BOT ===
+def main():
+    print("🔄 Đang khởi động BOT...")
+    
+    token = os.getenv("BOT_TOKEN", "ĐIỀN_TOKEN_BOT_CỦA_BẠN VÀO ĐÂY")
+    if token == "ĐIỀN_TOKEN_BOT_CỦA_BẠN VÀO ĐÂY":
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
+    
+    application = ApplicationBuilder().token(token).build()
+
+    # Handler hội thoại
+    rut_tien_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau),
+            CallbackQueryHandler(lien_ket_tai_khoan_bat_dau, pattern="^lien_ket_tai_khoan$")
+        ],
+        states={
+            NHAP_TAI_KHOAN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_thong_tin_tai_khoan)
+            ]
+        },
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), rut_tien_huy)]
+    )
+
+    nap_nang_cap_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(da_chuyen_khoan_callback, pattern="^dachuyen:")],
+        states={NAP_GUI_ANH: [MessageHandler(filters.ALL & ~filters.COMMAND, nhan_anh_chuyen_khoan)]},
+        fallbacks=[]
+    )
+
+    admin_cong_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tien$")],
+        states={ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_cong_tat_ca_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tat_ca$")],
+        states={ADMIN_CONG_TAT_CA: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_tru_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_tru_tien$")],
+        states={ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_gui_tb_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_gui_tb$")],
+        states={ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    # Đăng ký lệnh
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Regex("^👤 Hồ Sơ$"), ho_so))
+    application.add_handler(MessageHandler(filters.Regex("^🔍 Xem TikTok$"), xem_tiktok))
+    application.add_handler(MessageHandler(filters.Regex("^👥 Khu Vực Leader$"), khu_vuc_leader))
+    application.add_handler(MessageHandler(filters.Regex("^👑 Nâng Cấp Bậc$"), nang_cap))
+    application.add_handler(MessageHandler(filters.Regex("^🎧 Hỗ Trợ$"), ho_tro))
+    application.add_handler(MessageHandler(filters.Regex("^🔐 Nhập CaptCha$"), captcha))
+    application.add_handler(MessageHandler(filters.Regex("^🎛 QUẢN LÝ ADMIN$"), trang_quan_ly_admin))
+
+    # Callback query
+    application.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern="^nhan_thuong:"))
+    application.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern="^goi_"))
+    application.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no):"))
+    application.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_"))
+
+    # Hội thoại
+    application.add_handler(rut_tien_conv)
+    application.add_handler(nap_nang_cap_conv)
+    application.add_handler(admin_cong_conv)
+    application.add_handler(admin_cong_tat_ca_conv)
+    application.add_handler(admin_tru_conv)
+    application.add_handler(admin_gui_tb_conv)
+
+    print("✅ BOT đã sẵn sàng!")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
