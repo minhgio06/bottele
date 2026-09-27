@@ -838,4 +838,4 @@ def main():
     app.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^duyet_|^admin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_nut))
 
-    print("✅ B
+    print("✅ BOT KH
