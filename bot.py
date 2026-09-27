@@ -7,58 +7,71 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ✅ ĐÃ CẬP NHẬT THÔNG TIN CỦA BẠN
 BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"
 ADMIN_ID = 6163458267
 
-# ========== DANH SÁCH GÓI DỊCH VỤ ==========
+# ========== DANH SÁCH GÓI DỊCH VỤ — GIỐNG BOT MẪU ==========
 GOI_DICH_VU = [
-    {"id": 1, "ten": "Gói 100 Lượt Xem", "gia": 15000, "mo_ta": "Nhanh chóng, ổn định, không giảm"},
-    {"id": 2, "ten": "Gói 500 Lượt Xem", "gia": 60000, "mo_ta": "Tăng tương tác tự nhiên"},
-    {"id": 3, "ten": "Gói 1000 Lượt Xem", "gia": 100000, "mo_ta": "Phổ biến nhanh, an toàn tài khoản"},
-    {"id": 4, "ten": "Gói 5000 Lượt Xem", "gia": 450000, "mo_ta": "Tiết kiệm nhất, ưu tiên hiển thị"},
+    {"id": 1, "ten": "Gói 100 Lượt Xem", "gia": 15000, "mo_ta": "✅ Nhanh chóng | Ổn định | Không giảm"},
+    {"id": 2, "ten": "Gói 500 Lượt Xem", "gia": 60000, "mo_ta": "✅ Tăng tương tác tự nhiên | An toàn"},
+    {"id": 3, "ten": "Gói 1000 Lượt Xem", "gia": 100000, "mo_ta": "✅ Phổ biến nhanh | Ưu tiên đề xuất"},
+    {"id": 4, "ten": "Gói 5000 Lượt Xem", "gia": 450000, "mo_ta": "✅ Tiết kiệm nhất | Bền dài lâu"},
 ]
 
-# ========== MENU NÚT BẤM ==========
-def tao_menu():
+# ========== MENU CHÍNH — GIỐNG BOT MẪU ==========
+def menu_chinh():
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("📋 Xem Dịch Vụ")],
-            [KeyboardButton("🛒 Đặt Hàng"), KeyboardButton("💳 Thanh Toán")],
-            [KeyboardButton("📞 Hỗ Trợ")]
+            [KeyboardButton("💳 Nạp Tiền"), KeyboardButton("🛒 Đơn Hàng")],
+            [KeyboardButton("👤 Tài Khoản"), KeyboardButton("📞 Hỗ Trợ")]
         ],
+        resize_keyboard=True,
+        input_field_placeholder="Chọn chức năng bên dưới..."
+    )
+
+# ========== MENU QUAY LẠI ==========
+def menu_quay_lai():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("🏠 Trở Về Trang Chủ")]],
         resize_keyboard=True
     )
 
-# ========== BẮT ĐẦU ==========
+# ========== TRANG CHỦ — GIỐNG BOT MẪU ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
-        f"👋 Xin chào {user.first_name}!\n\n"
-        "✨ TikTop View — Tăng lượt xem & tương tác TikTok ✨\n\n"
-        "Chúng tôi cung cấp dịch vụ tăng lượt xem nhanh chóng, ổn định & an toàn.\n"
-        "Chọn chức năng bên dưới để bắt đầu 👇",
-        reply_markup=tao_menu()
+        f"👋 Xin chào, {user.first_name}!\n\n"
+        "✨ **TikTop View** — Tăng lượt xem & tương tác TikTok ✨\n\n"
+        "Chào mừng bạn đến với dịch vụ hàng đầu!\n"
+        "Chúng tôi cung cấp:\n"
+        "🔹 Lượt xem nhanh & ổn định\n"
+        "🔹 An toàn tuyệt đối, không khóa tài khoản\n"
+        "🔹 Hỗ trợ 24/7, hoàn tiền nếu lỗi\n\n"
+        "👇 Chọn chức năng bên dưới để bắt đầu:",
+        reply_markup=menu_chinh(),
+        parse_mode="Markdown"
     )
 
 # ========== XEM DỊCH VỤ ==========
 async def xem_dich_vu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 === DANH SÁCH DỊCH VỤ ===\n\n"
+    text += "Chọn gói bạn muốn mua:\n\n"
     for g in GOI_DICH_VU:
-        text += f"🔹 {g['id']}. {g['ten']}\n"
-        text += f"   💰 Giá: {g['gia']:,} VNĐ\n"
+        text += f"🔸 **{g['id']}. {g['ten']}**\n"
+        text += f"   💰 Giá: `{g['gia']:,}` VNĐ\n"
         text += f"   📝 {g['mo_ta']}\n"
-        text += f"   → Gõ /dat{g['id']}\n\n"
-    text += "💡 Ví dụ: muốn đặt Gói 1 → gõ /dat1"
-    await update.message.reply_text(text)
+        text += f"   ➡️ Gõ: `/mua{g['id']}`\n\n"
+    text += "💡 Ví dụ: mua Gói 1 → gõ `/mua1`"
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=menu_quay_lai())
 
-# ========== ĐẶT HÀNG ==========
-async def dat_hang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== BẮT ĐẦU ĐẶT HÀNG ==========
+async def mua_goi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        ma = int(update.message.text.replace("/dat", ""))
+        ma = int(update.message.text.replace("/mua", ""))
         goi = next((g for g in GOI_DICH_VU if g["id"] == ma), None)
     except:
-        await update.message.reply_text("❌ Lệnh không hợp lệ! Gõ ví dụ: /dat1")
+        await update.message.reply_text("❌ Lệnh không hợp lệ!\nVí dụ: `/mua1`", parse_mode="Markdown")
         return
     
     if not goi:
@@ -67,87 +80,147 @@ async def dat_hang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["goi_dang_chon"] = goi
     await update.message.reply_text(
-        f"✅ Bạn chọn: {goi['ten']}\n"
-        f"💰 Thành tiền: {goi['gia']:,} VNĐ\n\n"
-        "👉 Vui lòng gửi LINK VIDEO TikTok của bạn:"
+        f"✅ **Đã chọn: {goi['ten']}**\n"
+        f"💰 Thành tiền: `{goi['gia']:,}` VNĐ\n\n"
+        "🔗 Vui lòng gửi **LINK VIDEO TikTok** của bạn:",
+        parse_mode="Markdown",
+        reply_markup=menu_quay_lai()
     )
 
-# ========== XỬ LÝ TIN NHẮN ==========
-async def nhan_tin_nhan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    goi = context.user_data.get("goi_dang_chon")
+# ========== XỬ LÝ TẤT CẢ TIN NHẮN ==========
+async def xu_ly_tin_nhan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    goi_dang_chon = context.user_data.get("goi_dang_chon")
     
-    if goi:
+    # Nếu đang chọn gói → nhận link
+    if goi_dang_chon:
         link = update.message.text.strip()
         user = update.effective_user
-        thong_bao = f"""
+        goi = goi_dang_chon
+        
+        don_hang = f"""
 🛒 === ĐƠN HÀNG MỚI ===
 
-👤 Khách: {user.first_name}
-🆔 ID: {user.id}
-📌 Tên: @{user.username or "không có"}
+👤 Khách hàng: {user.first_name}
+🆔 ID: `{user.id}`
+📌 Tên tài khoản: @{user.username or "Không có"}
 
-📦 Dịch vụ: {goi['ten']}
-💰 Thành tiền: {goi['gia']:,} VNĐ
+📦 Dịch vụ: **{goi['ten']}**
+💰 Số tiền: `{goi['gia']:,}` VNĐ
 🔗 Link video: {link}
+
+⏳ Trạng thái: **Chờ xác nhận thanh toán**
 """
+        # Thông báo cho khách
         await update.message.reply_text(
-            f"✅ Đơn hàng đã ghi nhận!\n{thong_bao}\n"
-            "💳 Vui lòng thanh toán:\n"
-            "🏦 Vietcombank - 123456789 - NGUYEN VAN A\n"
-            "💵 Số tiền: " + f"{goi['gia']:,}" + " VNĐ\n"
-            "📝 Nội dung: " + goi['ten'] + "\n"
-            "Gửi ảnh biên lai ở đây để kích hoạt! 🚀"
+            f"✅ **Đơn hàng đã được tạo thành công!**\n\n{don_hang}\n"
+            "💳 Vui lòng thanh toán theo thông tin sau:\n\n"
+            "🏦 **Ngân hàng**: Vietcombank\n"
+            "📌 **Số tài khoản**: 123456789\n"
+            "👤 **Chủ tài khoản**: NGUYEN VAN A\n"
+            f"💵 **Số tiền**: `{goi['gia']:,}` VNĐ\n"
+            "📝 **Nội dung**: Tên gói + Link video\n\n"
+            "📩 Gửi ảnh biên lai chuyển khoản vào đây để chúng tôi kích hoạt dịch vụ ngay! 🚀",
+            parse_mode="Markdown",
+            reply_markup=menu_chinh()
         )
-        # Gửi thông báo cho Admin
+        
+        # Thông báo cho Admin
         try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=thong_bao)
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🔔 === CÓ ĐƠN HÀNG MỚI ===\n{don_hang}\n📩 Kiểm tra & kích hoạt nhé!",
+                parse_mode="Markdown"
+            )
         except Exception as e:
-            print(f"Không gửi được thông báo cho Admin: {e}")
+            print(f"Không gửi được thông báo Admin: {e}")
+        
         context.user_data.clear()
         return
 
-    t = update.message.text
-    if t == "📋 Xem Dịch Vụ" or t == "/dichvu":
+    # Xử lý các nút bấm
+    tin_nhan = update.message.text
+    
+    if tin_nhan == "🏠 Trở Về Trang Chủ" or tin_nhan == "/start":
+        await start(update, context)
+    
+    elif tin_nhan == "📋 Xem Dịch Vụ":
         await xem_dich_vu(update, context)
-    elif t == "🛒 Đặt Hàng":
-        await update.message.reply_text("👉 Xem danh sách dịch vụ trước:\n📋 Nhấn 'Xem Dịch Vụ' nhé!")
-    elif t == "💳 Thanh Toán":
+    
+    elif tin_nhan == "💳 Nạp Tiền":
         await update.message.reply_text(
-            "💳 === THÔNG TIN THANH TOÁN ===\n\n"
-            "🏦 Vietcombank\n"
-            "📌 Số tài khoản: 123456789\n"
-            "👤 Tên: NGUYEN VAN A\n"
-            "💵 Chờ xác nhận đơn hàng để biết số tiền chính xác\n"
-            "📝 Nội dung chuyển khoản: Tên gói + Link video"
+            "💳 === NẠP TIỀN VÀO TÀI KHOẢN ===\n\n"
+            "🏦 **Ngân hàng**: Vietcombank\n"
+            "📌 **STK**: 123456789\n"
+            "👤 **Tên**: NGUYEN VAN A\n\n"
+            "📝 **Nội dung**: Nạp tiền + ID Telegram\n"
+            f"🆔 ID của bạn: `{update.effective_user.id}`\n\n"
+            "Gửi ảnh biên lai để được cộng tiền tự động!",
+            parse_mode="Markdown",
+            reply_markup=menu_quay_lai()
         )
-    elif t == "📞 Hỗ Trợ":
+    
+    elif tin_nhan == "🛒 Đơn Hàng":
+        await update.message.reply_text(
+            "🛒 === LỊCH SỬ ĐƠN HÀNG ===\n\n"
+            "Chưa có đơn hàng nào.\n"
+            "Gõ `/danhsach` để xem dịch vụ và đặt hàng nhé!",
+            parse_mode="Markdown",
+            reply_markup=menu_quay_lai()
+        )
+    
+    elif tin_nhan == "👤 Tài Khoản":
+        user = update.effective_user
+        await update.message.reply_text(
+            "👤 === THÔNG TIN TÀI KHOẢN ===\n\n"
+            f"📌 Tên: {user.first_name}\n"
+            f"🆔 ID: `{user.id}`\n"
+            f"🔗 Tên người dùng: @{user.username or 'Chưa đặt'}\n\n"
+            "💰 Số dư: `0` VNĐ\n"
+            "💡 Nạp tiền để đặt hàng nhanh hơn!",
+            parse_mode="Markdown",
+            reply_markup=menu_quay_lai()
+        )
+    
+    elif tin_nhan == "📞 Hỗ Trợ":
         await update.message.reply_text(
             "📞 === HỖ TRỢ KHÁCH HÀNG ===\n\n"
-            "💬 Liên hệ: @Admin_TikTopView\n"
-            "⏰ Hoạt động: 8:00 - 22:00 hàng ngày\n"
-            "📩 Phản hồi nhanh nhất trong 15 phút!"
+            "💬 **Admin**: @Admin_TikTopView\n"
+            "⏰ **Thời gian**: 8:00 - 22:00 hàng ngày\n"
+            "⚡ **Phản hồi**: Trong vòng 5-15 phút\n\n"
+            "📌 Lưu ý: Không chia sẻ Token/Mật khẩu cho ai!",
+            parse_mode="Markdown",
+            reply_markup=menu_quay_lai()
         )
+    
+    elif tin_nhan == "/danhsach":
+        await xem_dich_vu(update, context)
+    
     else:
         await update.message.reply_text(
             "⚠️ Tôi không hiểu yêu cầu này.\n"
-            "Chọn chức năng từ menu bên dưới nhé 👇",
-            reply_markup=tao_menu()
+            "👇 Vui lòng chọn chức năng từ menu bên dưới:",
+            reply_markup=menu_chinh()
         )
 
 # ========== CHẠY BOT ==========
 def main():
     print("🔄 Đang khởi động TikTop View...")
-    print(f"✅ Token: {BOT_TOKEN[:15]}...")
-    print(f"✅ Admin ID: {ADMIN_ID}")
+    print(f"✅ Token: {BOT_TOKEN[:20]}...")
+    print(f"✅ Admin: {ADMIN_ID}")
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
+    
+    # Đăng ký lệnh
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("dichvu", xem_dich_vu))
-    app.add_handler(CommandHandler("dat", dat_hang))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, nhan_tin_nhan))
-
-    print("✅ BOT ĐANG CHẠY! Mở Telegram thử /start nhé!")
+    app.add_handler(CommandHandler("danhsach", xem_dich_vu))
+    app.add_handler(CommandHandler("mua", mua_goi))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_tin_nhan))
+    
+    print("=" * 40)
+    print("✅ ✅ BOT ĐANG CHẠY HOÀN TOÀN! ✅ ✅")
+    print("👉 Mở Telegram tìm bot của bạn → gõ /start")
+    print("=" * 40)
+    
     app.run_polling()
 
 if __name__ == "__main__":
