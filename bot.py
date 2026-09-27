@@ -8,7 +8,7 @@ from telegram.ext import (
 )
 
 # ===================== CẤU HÌNH =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6163458267"))
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU")
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
