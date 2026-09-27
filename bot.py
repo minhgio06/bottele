@@ -50,7 +50,7 @@ GOI_NANG_CAP = {
         "cap_moi": "Leader Bạc",
         "gioi_han_xem": 5,
         "tien_moi_video": 2500,
-        "ngan_hang": "ACB Bank",
+        "ngan_hang": "ACB",
         "chu_tk": "HA QUANG MINH",
         "so_tk": "25607451",
         "ma_chung": "TIKTOP BAC"
@@ -61,7 +61,7 @@ GOI_NANG_CAP = {
         "cap_moi": "Leader Vàng",
         "gioi_han_xem": 10,
         "tien_moi_video": 3000,
-        "ngan_hang": "ACB Bank",
+        "ngan_hang": "ACB",
         "chu_tk": "HA QUANG MINH",
         "so_tk": "25607451",
         "ma_chung": "TIKTOP VANG"
@@ -72,7 +72,7 @@ GOI_NANG_CAP = {
         "cap_moi": "Leader Bạch Kim",
         "gioi_han_xem": 20,
         "tien_moi_video": 3500,
-        "ngan_hang": "ACB Bank",
+        "ngan_hang": "ACB",
         "chu_tk": "HA QUANG MINH",
         "so_tk": "25607451",
         "ma_chung": "TIKTOP BACHKIM"
@@ -83,7 +83,7 @@ GOI_NANG_CAP = {
         "cap_moi": "Leader Kim Cương",
         "gioi_han_xem": 30,
         "tien_moi_video": 6000,
-        "ngan_hang": "ACB Bank",
+        "ngan_hang": "ACB",
         "chu_tk": "HA QUANG MINH",
         "so_tk": "25607451",
         "ma_chung": "TIKTOP KIMCUONG"
@@ -247,7 +247,6 @@ async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = await context.bot.get_me()
     link = f"https://t.me/{bot_username.username}?start={u_id}"
     
-    # Hiển thị giới hạn xem theo cấp bậc
     thong_tin_cap = ""
     for cap in CAP_BAC_CONFIG:
         cfg = CAP_BAC_CONFIG[cap]
@@ -329,7 +328,7 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
 🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>
 Ngân hàng: {g['ngan_hang']}
 Chủ TK: {g['chu_tk']}
-Tài khoản ACB: {g['so_tk']}
+Số TK: {g['so_tk']}
 
 💵 Số tiền: {g['gia']:,}đ
 📝 Nội dung CK: {ma_nap}
@@ -374,7 +373,6 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
     
     yc = nap_tien_cho_duyet[ma_nap]
     
-    # Lấy ảnh gửi cho admin
     photo = update.effective_message.photo[-1] if update.effective_message.photo else None
     caption = f"""📢 <b>YÊU CẦU NẠP TIỀN — CHỜ DUYỆT</b>
 
@@ -437,7 +435,6 @@ async def captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=menu_chinh(update.effective_user.id)
     )
 
-# ========== RÚT TIỀN ==========
 async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
@@ -527,7 +524,6 @@ async def rut_tien_huy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Đã hủy.", reply_markup=menu_chinh(u_id))
     return ConversationHandler.END
 
-# ========== QUẢN LÝ ADMIN ==========
 async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     if u_id != ADMIN_ID:
@@ -565,7 +561,6 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     u_id = update.effective_user.id
     if u_id != ADMIN_ID: return
 
-    # === Duyệt nạp/nâng cấp ===
     if data.startswith("duyet_nap_ok:"):
         _, ma_nap = data.split(":")
         if ma_nap not in nap_tien_cho_duyet:
@@ -604,7 +599,6 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         await query.edit_message_text(f"❌ Đã từ chối {ma_nap}!")
         del nap_tien_cho_duyet[ma_nap]
 
-    # === Duyệt rút tiền ===
     elif data.startswith("duyet_ok:"):
         _, yeu_cau_id, so_tien = data.split(":")
         so_tien = int(so_tien)
@@ -647,7 +641,6 @@ Vui lòng liên hệ hỗ trợ!""",
         await query.edit_message_text(f"❌ Đã từ chối {yeu_cau_id}!")
         del danh_sach_cho_duyet[yeu_cau_id]
 
-    # === Các chức năng Admin khác ===
     elif data == "admin_cong_tien":
         await query.message.reply_text("""💰 <b>CỘNG TIỀN CHO NGƯỜI DÙNG</b>
 
@@ -799,41 +792,10 @@ def main():
     print("="*50)
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Handler rút tiền
     rut_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau)],
         states={
             NH_TEN_NGANHANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_nganhang)],
             NH_SO_TAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_taikhoan)],
             NH_TEN_CHUTAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_chu)],
-            NH_SO_TIEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_tien)],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$|^/cancel$"), rut_tien_huy)],
-    )
-
-    # Handler nạp tiền gửi ảnh
-    nap_gui_anh_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(da_chuyen_khoan_callback, pattern=r"^dachuyen:")],
-        states={
-            NAP_GUI_ANH: [MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, nhan_anh_chuyen_khoan)],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$|^/cancel$"), huy_hanh_dong_admin)],
-    )
-
-    # Handler admin
-    admin_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern=r"^admin_(cong|tru|gui_tb)$")],
-        states={
-            ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
-            ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
-            ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$|^/cancel$"), huy_hanh_dong_admin)],
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern=r"^nhan_thuong:"))
-    app.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern=r"^goi_"))
-    app.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern=r"^(duyet_ok:|duyet_no:|duyet_nap_ok:|duyet_nap_no:|admin_ds_)"))
-    app.add_handler(rut_handler)
-    app.add_handler(n
+            NH_SO_TIEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_t
