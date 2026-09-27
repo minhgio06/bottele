@@ -95,7 +95,7 @@ async def nhan_tin_nhan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "📞 Hỗ Trợ":
             await update.message.reply_text(
                 "📞 === HỖ TRỢ KHÁCH HÀNG ===\n\n"
-                "💬 Liên hệ: @Admin_TikTopView\n"
+                "💬 Liên hệ: @minhpro19\n"
                 "⏰ Hoạt động: 8:00 - 22:00 hàng ngày\n"
                 "📩 Phản hồi nhanh nhất trong 15 phút!"
             )
