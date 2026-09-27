@@ -340,6 +340,7 @@ def menu_chinh(user_id=None):
 
 
 async def kt_kenh(user_id, context):
+    """Kiểm tra người dùng đã tham gia kênh bắt buộc hay chưa."""
     if not KENH_YEU_CAU:
         return True
     try:
@@ -347,8 +348,77 @@ async def kt_kenh(user_id, context):
             chat_id=KENH_YEU_CAU, user_id=user_id
         )
         return m.status in {"member", "administrator", "creator"}
-    except Exception:
+    except Exception as exc:
+        # Nếu bot không có quyền kiểm tra thành viên kênh, coi như chưa xác minh
+        # để không cho người dùng bỏ qua bước tham gia.
+        print("CHECK CHANNEL ERROR:", repr(exc))
         return False
+
+
+def nut_kiem_tra_kenh():
+    """Nút mở kênh + nút kiểm tra lại sau khi người dùng đã tham gia."""
+    link = KENH_YEU_CAU
+    if link.startswith("@"):  # Telegram URL từ username kênh
+        link = "https://t.me/" + link[1:]
+    elif not link.startswith("http://") and not link.startswith("https://"):
+        link = "https://t.me/" + link.lstrip("/")
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 THAM GIA KÊNH", url=link)],
+        [InlineKeyboardButton("✅ TÔI ĐÃ THAM GIA — KIỂM TRA", callback_data="kiem_tra_kenh")],
+    ])
+
+
+async def yeu_cau_tham_gia_kenh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hiện yêu cầu tham gia kênh và cho phép người dùng bấm kiểm tra lại."""
+    u = update.effective_user
+    init_user(u.id, u.full_name)
+
+    if await kt_kenh(u.id, context):
+        await update.message.reply_text(
+            "✅ Bạn đã tham gia kênh thành công!\n\n"
+            "🎉 Bây giờ bạn có thể sử dụng bot.",
+            reply_markup=menu_chinh(u.id),
+        )
+        return
+
+    await update.message.reply_text(
+        "🚀 <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
+        "1️⃣ Bấm <b>THAM GIA KÊNH</b>\n"
+        "2️⃣ Tham gia kênh\n"
+        "3️⃣ Quay lại bot và bấm <b>TÔI ĐÃ THAM GIA — KIỂM TRA</b>",
+        parse_mode="HTML",
+        reply_markup=nut_kiem_tra_kenh(),
+    )
+
+
+async def kiem_tra_kenh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    uid = update.effective_user.id
+    u = get_user(uid)
+    if not u:
+        u = init_user(uid, update.effective_user.full_name)
+
+    if await kt_kenh(uid, context):
+        await query.edit_message_text(
+            "✅ <b>XÁC NHẬN THAM GIA KÊNH THÀNH CÔNG!</b>\n\n"
+            "🎉 Bạn đã được mở khóa bot.\n"
+            "👇 Chọn chức năng bên dưới để bắt đầu.",
+            parse_mode="HTML",
+        )
+        await context.bot.send_message(
+            chat_id=uid,
+            text="🎉 Chào mừng bạn! Menu bot đã được mở.",
+            reply_markup=menu_chinh(uid),
+        )
+        return
+
+    await query.answer(
+        "❌ Chưa phát hiện bạn tham gia kênh. Hãy tham gia rồi bấm kiểm tra lại.",
+        show_alert=True,
+    )
 
 
 # ============================================================
@@ -367,11 +437,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_user(u.id, u.full_name, ref_by)
 
     if not await kt_kenh(u.id, context):
-        link = KENH_YEU_CAU.replace("@", "")
         await update.message.reply_text(
-            "🚀 Hãy tham gia kênh trước:\n"
-            f"🔗 https://t.me/{link}\n\n"
-            "Sau đó gõ /start"
+            "🚀 <b>Hãy tham gia kênh trước</b> rồi bấm nút kiểm tra bên dưới.",
+            parse_mode="HTML",
+            reply_markup=nut_kiem_tra_kenh(),
         )
         return
 
@@ -2053,6 +2122,14 @@ def build_application():
                 r"xacminh_ok|xacminh_no):.+$|"
                 r"^(admin_ds_(rut|nap|xacminh|nguoi)|admin_duyet_tat_ca)$"
             ),
+        ),
+        group=0,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            kiem_tra_kenh_callback,
+            pattern=r"^kiem_tra_kenh$",
         ),
         group=0,
     )
