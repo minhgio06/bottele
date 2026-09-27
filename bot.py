@@ -18,7 +18,7 @@ LINK_VIDEO = "https://t.me/cayxuonline_bot"
 users = {}
 
 CAP_BAC_CONFIG = {
-    "Thành viên": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 5, "thuong_gioi_thieu": 100},
+    "Thành viên": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 2, "thuong_gioi_thieu": 100},
     "Leader Bạc": {"xu_moi_video": 3000, "gioi_han_xem_ngay": 8, "thuong_gioi_thieu": 200},
     "Leader Vàng": {"xu_moi_video": 3500, "gioi_han_xem_ngay": 12, "thuong_gioi_thieu": 300},
     "Leader Bạch Kim": {"xu_moi_video": 5000, "gioi_han_xem_ngay": 20, "thuong_gioi_thieu": 500},
@@ -33,13 +33,6 @@ MOC_CAP = [
     ("Leader Bạch Kim", 300, 499),
     ("Leader Kim Cương", 500, 999),
     ("Leader Cao Thủ", 1000, 999999),
-]
-
-GOI_NANG_CAP = [
-    {"id": 1, "ten": "Gói Bạc", "nap": 125000, "cap": "Leader Bạc"},
-    {"id": 2, "ten": "Gói Vàng", "nap": 250000, "cap": "Leader Vàng"},
-    {"id": 3, "ten": "Gói Bạch Kim", "nap": 1000000, "cap": "Leader Bạch Kim"},
-    {"id": 4, "ten": "Gói Kim Cương", "nap": 2000000, "cap": "Leader Kim Cương"},
 ]
 
 HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
@@ -61,11 +54,9 @@ def init_user(user_id, ten, ref_by=None):
         }
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
-            # Tính thưởng giới thiệu dựa cấp bậc người mời
             cap_nguoi_moi = users[ref_by]["cap_bac"]
             thuong = CAP_BAC_CONFIG[cap_nguoi_moi]["thuong_gioi_thieu"]
             users[ref_by]["so_du"] += thuong
-            # Cập nhật cấp bậc tự động theo số người giới thiệu
             users[ref_by]["cap_bac"] = cap_bac_tu_so_nguoi(users[ref_by]["gioi_thieu"])
     return users[user_id]
 
@@ -112,7 +103,7 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔍 Video đã xem: {u['video_da_xem']}
 📅 Tham gia: {u['ngay_vao']}""", parse_mode="HTML", reply_markup=menu_chinh())
 
-# ========== ✅ XEM VIDEO ==========
+# ========== ✅ XEM TIKTOK — ĐÚNG HỆT ẢNH ==========
 async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
@@ -122,7 +113,7 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if u["dang_xem"]:
-        await update.message.reply_text("⏳ Đang chờ nhận tiền, vui lòng chờ...", reply_markup=menu_chinh())
+        await update.message.reply_text("⏳ Đang xử lý, vui lòng chờ...", reply_markup=menu_chinh())
         return
 
     hom_nay = datetime.now().strftime("%d/%m/%Y")
@@ -131,70 +122,94 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u["ngay_reset"] = hom_nay
 
     gioi_han = CAP_BAC_CONFIG[u["cap_bac"]]["gioi_han_xem_ngay"]
+    tien_moi_video = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
+
     if u["video_ngay"] >= gioi_han:
         await update.message.reply_text(
-            f"⏳ Đã hết lượt xem hôm nay!\nXem tối đa: {gioi_han} video/ngày\nNâng cấp gói để xem nhiều hơn!",
+            f"⏳ Đã hết lượt xem hôm nay!\nXem tối đa: {gioi_han} video/ngày",
             reply_markup=menu_chinh()
         )
         return
 
     u["dang_xem"] = True
-    tien_duoc = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
+    hien_tai = u["video_ngay"]
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Mở Link Xem Video", url=LINK_VIDEO)],
-        [InlineKeyboardButton("✅ Đã Xem Xong — Nhận Tiền", callback_data=f"nhan_tien:{u_id}")]
+    # Gửi tin nhắn hướng dẫn + nút MỞ VIDEO
+    keyboard_mo = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=LINK_VIDEO)]
     ])
 
-    await update.message.reply_text(
-        f"""🎬 <b>XEM VIDEO KIẾM TIỀN</b>
+    msg = await update.message.reply_text(
+        f"""🔍 <b>XEM TIKTOK</b>
 
-📌 Bước 1: Nhấn link dưới đây mở xem
-📌 Bước 2: Xem đủ <b>15 giây</b>
-📌 Bước 3: Nhấn nút <b>Nhận Tiền</b>
+🎬 Video hôm nay: {hien_tai}/{gioi_han}
+💰 Thưởng: {tien_moi_video:,}đ/video
+⏱ Thời gian xem: 15 giây
 
-💰 Thưởng: +{tien_duoc:,}đ/video
-🎯 Hạn mức hôm nay: {u['video_ngay'] + 1}/{gioi_han}""",
-        parse_mode="HTML", reply_markup=keyboard
+👉 Bấm mở video và xem đủ 15 giây.
+⌛ Sau 15 giây nút nhận thưởng sẽ tự xuất hiện.""",
+        parse_mode="HTML", reply_markup=keyboard_mo
     )
 
-async def nhan_tien_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Đếm ngược 15 giây → thay nút thành NHẬN THƯỞNG
+    await asyncio.sleep(15)
+
+    # Kiểm tra xem còn trong phiên không
+    if not u["dang_xem"]:
+        return
+
+    keyboard_nhan = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ NHẬN {tien_moi_video:,}đ", callback_data=f"nhan_thuong:{u_id}:{tien_moi_video}")]
+    ])
+
+    await msg.edit_reply_markup(reply_markup=keyboard_nhan)
+
+# ========== ✅ NHẬN THƯỞNG ==========
+async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    if not data.startswith("nhan_tien:"): return
-    u_id = int(data.split(":")[1])
-    user_id_hien_tai = update.effective_user.id
-    if u_id != user_id_hien_tai:
-        await query.answer("❌ Đây không phải phiên của bạn!", show_alert=True)
+
+    if not data.startswith("nhan_thuong:"):
         return
+
+    _, u_id, tien_nhan = data.split(":")
+    u_id = int(u_id)
+    tien_nhan = int(tien_nhan)
+    user_hien_tai = update.effective_user.id
+
+    if u_id != user_hien_tai:
+        await query.answer("❌ Không phải phiên của bạn!", show_alert=True)
+        return
+
     u = users[u_id]
     if not u["dang_xem"]:
-        await query.answer("❌ Phiên đã hết hạn, nhấn [Xem TikTok] lại!", show_alert=True)
+        await query.answer("❌ Đã hết hạn, nhấn [Xem TikTok] lại!", show_alert=True)
         return
 
-    tien_duoc = CAP_BAC_CONFIG[u["cap_bac"]]["xu_moi_video"]
     gioi_han = CAP_BAC_CONFIG[u["cap_bac"]]["gioi_han_xem_ngay"]
+
+    # Cộng tiền
     u["video_da_xem"] += 1
     u["video_ngay"] += 1
-    u["so_du"] += tien_duoc
+    u["so_du"] += tien_nhan
     u["dang_xem"] = False
 
+    # Hoa hồng cấp 1
     if u["ref_by"] and u["ref_by"] in users:
-        users[u["ref_by"]]["so_du"] += int(tien_duoc * HOA_HONG["f1"])
+        users[u["ref_by"]]["so_du"] += int(tien_nhan * HOA_HONG["f1"])
 
+    # Thông báo thành công giống hệt ảnh
     await query.edit_message_text(
-        f"""✅ <b>NHẬN TIỀN THÀNH CÔNG</b>
+        f"""✅ <b>NHẬN THƯỞNG THÀNH CÔNG</b>
 
-💰 Đã nhận: +{tien_duoc:,}đ
-💵 Số dư hiện tại: {u['so_du']:,}đ
-📊 Tiến độ hôm nay: {u['video_ngay']}/{gioi_han}
-
-👉 Nhấn [🔍 Xem TikTok] để tiếp tục kiếm tiền!""",
+🎬 Video hôm nay: {u['video_ngay']}/{gioi_han}
+⏱ Đã xem đủ: 15 giây
+💰 Thưởng: +{tien_nhan:,}đ
+💵 Số dư: {u['so_du']:,}đ""",
         parse_mode="HTML"
     )
 
-# ========== ✅ KHU VỰC LEADER — GIỐNG ẢNH ==========
 async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
@@ -231,7 +246,6 @@ F1: 3% | F2: 2% | F3: 1%
         parse_mode="HTML", reply_markup=menu_chinh()
     )
 
-# ========== ✅ NÂNG CẤP BẬC — GIỐNG ẢNH ==========
 async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥈 Gói Bạc", callback_data="goi_bac")],
@@ -247,7 +261,6 @@ async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=keyboard
     )
 
-# Xử lý chọn gói nâng cấp
 async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -279,7 +292,7 @@ Sau khi chuyển, chờ admin duyệt!""",
 
 async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @minhpro19\n⏰ 8:00 - 22:00 hàng ngày",
+        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @Admin\n⏰ 8:00 - 22:00 hàng ngày",
         parse_mode="HTML", reply_markup=menu_chinh()
     )
 
@@ -324,7 +337,7 @@ def main():
     print("="*50)
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(nhan_tien_callback, pattern=r"^nhan_tien:"))
+    app.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern=r"^nhan_thuong:"))
     app.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern=r"^goi_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_nut))
     print("✅ SẴN SÀNG! Gõ /start trên Telegram nhé!")
