@@ -1,5 +1,7 @@
 import asyncio
+import html
 import os
+import time
 import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -25,12 +27,12 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAElYoIo3KEQH0ey2ZEVbCy6FL4Bg4GZvY4") 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "") 
-LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot") 
-RUT_TOI_THIEU = 50_000 
-DB_FILE = os.getenv("DB_FILE", "bot_data.db") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
+LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
+RUT_TOI_THIEU = 50_000
+DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 if not BOT_TOKEN:
@@ -109,6 +111,11 @@ def now_vn():
 
 def today_vn():
     return now_vn().strftime("%d/%m/%Y")
+
+
+def h(value):
+    """Escape text before inserting it into Telegram HTML messages."""
+    return html.escape(str(value), quote=False)
 
 
 def init_db():
@@ -858,7 +865,7 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         )
         return NHAP_TAI_KHOAN
 
-    request_id = f"RUT{u['id']}{int(now_vn().timestamp())}"
+    request_id = f"RUT{u['id']}{int(time.time() * 1000)}"
 
     with db() as conn:
         conn.execute(
@@ -965,11 +972,12 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     if update.effective_user.id != ADMIN_ID:
         await query.answer("❌ Không có quyền.", show_alert=True)
         return
+
+    await query.answer()
 
     data = query.data
 
@@ -1029,64 +1037,84 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data.startswith("duyet_ok:") or data.startswith("duyet_no:"):
         request_id = data.split(":", 1)[1]
 
+        # Xử lý trong một transaction duy nhất để không thể duyệt/trừ tiền 2 lần.
         with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             yc = conn.execute(
                 "SELECT * FROM withdrawals WHERE request_id=? AND status='pending'",
                 (request_id,),
             ).fetchone()
 
             if not yc:
-                await query.edit_message_text("❌ Yêu cầu không tồn tại hoặc đã xử lý.")
-                return
-
-            user = get_user(yc["user_id"])
-            if not user:
-                await query.edit_message_text("❌ Người dùng không tồn tại.")
+                conn.rollback()
+                await query.edit_message_text("❌ Yêu cầu không tồn tại hoặc đã được xử lý.")
                 return
 
             if data.startswith("duyet_no:"):
-                conn.execute(
-                    "UPDATE withdrawals SET status='rejected' WHERE request_id=?",
+                changed = conn.execute(
+                    "UPDATE withdrawals SET status='rejected' WHERE request_id=? AND status='pending'",
                     (request_id,),
-                )
-                await context.bot.send_message(
-                    chat_id=yc["user_id"],
-                    text=f"""❌ <b>RÚT TIỀN BỊ TỪ CHỐI</b>
+                ).rowcount
+                if changed != 1:
+                    conn.rollback()
+                    await query.edit_message_text("❌ Yêu cầu đã được xử lý bởi thao tác khác.")
+                    return
+                conn.commit()
 
-📋 Mã: {request_id}
-💵 Số tiền: {yc['so_tien']:,}đ
-Vui lòng liên hệ hỗ trợ.""",
-                    parse_mode="HTML",
-                )
-                await query.edit_message_text(f"❌ Đã từ chối {request_id}.")
+                try:
+                    await context.bot.send_message(
+                        chat_id=yc["user_id"],
+                        text=(
+                            "❌ <b>RÚT TIỀN BỊ TỪ CHỐI</b>\n\n"
+                            f"📋 Mã: <code>{h(request_id)}</code>\n"
+                            f"💵 Số tiền: {yc['so_tien']:,}đ\n"
+                            "Vui lòng liên hệ hỗ trợ."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as exc:
+                    print("SEND REJECT NOTICE ERROR:", repr(exc))
+                await query.edit_message_text(f"❌ Đã từ chối {h(request_id)}.")
                 return
 
-            # Dùng transaction để tránh duyệt trùng.
-            if user["so_du"] < yc["so_tien"]:
-                await query.edit_message_text("❌ Số dư hiện tại không đủ.")
+            # Duyệt: trừ số dư và đổi trạng thái trong cùng transaction.
+            changed_balance = conn.execute(
+                "UPDATE users SET so_du = so_du - ? WHERE id=? AND so_du >= ?",
+                (yc["so_tien"], yc["user_id"], yc["so_tien"]),
+            ).rowcount
+            if changed_balance != 1:
+                conn.rollback()
+                await query.edit_message_text("❌ Số dư hiện tại không đủ để duyệt đơn.")
                 return
 
-            conn.execute(
-                "UPDATE users SET so_du = so_du - ? WHERE id=?",
-                (yc["so_tien"], yc["user_id"]),
-            )
-            conn.execute(
-                "UPDATE withdrawals SET status='approved' WHERE request_id=?",
+            changed_request = conn.execute(
+                "UPDATE withdrawals SET status='approved' WHERE request_id=? AND status='pending'",
                 (request_id,),
+            ).rowcount
+            if changed_request != 1:
+                conn.rollback()
+                await query.edit_message_text("❌ Yêu cầu đã được xử lý bởi thao tác khác.")
+                return
+
+            conn.commit()
+
+        try:
+            await context.bot.send_message(
+                chat_id=yc["user_id"],
+                text=(
+                    "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
+                    f"📋 Mã: <code>{h(request_id)}</code>\n"
+                    f"💵 Số tiền: {yc['so_tien']:,}đ\n"
+                    f"🔗 Tài khoản: {h(yc['tai_khoan'])}\n"
+                    "✅ Đã duyệt."
+                ),
+                parse_mode="HTML",
             )
+        except Exception as exc:
+            print("SEND APPROVE NOTICE ERROR:", repr(exc))
 
-        await context.bot.send_message(
-            chat_id=yc["user_id"],
-            text=f"""✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>
-
-📋 Mã: {request_id}
-💵 Số tiền: {yc['so_tien']:,}đ
-🔗 Tài khoản: {yc['tai_khoan']}
-✅ Đã duyệt.""",
-            parse_mode="HTML",
-        )
         await query.edit_message_text(
-            f"✅ Đã duyệt {request_id} — Trừ {yc['so_tien']:,}đ."
+            f"✅ Đã duyệt {h(request_id)} — Trừ {yc['so_tien']:,}đ."
         )
         return
 
@@ -1390,21 +1418,26 @@ def build_application():
         allow_reentry=True,
     )
 
-    # Các callback không thuộc conversation.
-    app.add_handler(nap_conv)
-    app.add_handler(rut_conv)
-    app.add_handler(admin_conv)
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("cancel", cancel))
-
-    app.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern=r"^nhan_thuong:.+$"))
+    # Callback duyệt đơn được đăng ký ở group 0, trước ConversationHandler.
+    # Điều này đảm bảo nút DUYỆT/TỪ CHỐI của admin luôn được bắt đúng.
     app.add_handler(
         CallbackQueryHandler(
             xu_ly_admin_callback,
-            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no)(:.+)?$|^(admin_ds_rut|admin_ds_nap|admin_ds_nguoi)$",
-        )
+            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no|admin_ds_rut|admin_ds_nap|admin_ds_nguoi)$",
+        ),
+        group=0,
     )
+    app.add_handler(
+        CallbackQueryHandler(nhan_thuong_callback, pattern=r"^nhan_thuong:.+$"),
+        group=0,
+    )
+
+    app.add_handler(CommandHandler("start", start), group=0)
+    app.add_handler(CommandHandler("cancel", cancel), group=0)
+
+    app.add_handler(nap_conv, group=1)
+    app.add_handler(rut_conv, group=1)
+    app.add_handler(admin_conv, group=1)
 
     app.add_handler(MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so))
     app.add_handler(MessageHandler(filters.Regex(r"^🔍 Xem TikTok$"), xem_tiktok))
@@ -1418,11 +1451,35 @@ def build_application():
     return app
 
 
-if __name__ == "__main__":
-    # Python 3.14 không tự tạo current event loop cho MainThread.
-    # Tạo loop trước khi gọi run_polling() để python-telegram-bot 21.7 hoạt động ổn định.
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
+async def run_bot():
     application = build_application()
-    print("Bot đang chạy...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    # Khởi tạo Bot trước khi gọi API.
+    await application.initialize()
+
+    # Xóa webhook cũ và bỏ update tồn đọng trước khi polling.
+    # Lưu ý: Telegram chỉ cho phép MỘT tiến trình dùng getUpdates cho một bot token.
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.start()
+    try:
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
+        print("Bot đang chạy...")
+        await asyncio.Event().wait()
+    finally:
+        if application.updater.running:
+            await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        print("Bot đã dừng.")
+    except Exception as exc:
+        print("BOT START ERROR:", repr(exc))
+        raise
