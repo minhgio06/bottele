@@ -1,5 +1,7 @@
 import os
+import random
 from datetime import datetime
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, filters,
@@ -12,7 +14,6 @@ ADMIN_ID = 6163458267
 KENH_YEU_CAU = None
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
 RUT_TOI_THIEU = 50000
-
 # Trạng thái hội thoại
 NHAP_TAI_KHOAN = range(1)
 ADMIN_CONG_SO_DU, ADMIN_TRU_SO_DU, ADMIN_GUI_TB, ADMIN_CONG_TAT_CA = range(10, 14)
@@ -83,7 +84,8 @@ def init_user(user_id, ten, ref_by=None):
             "video_da_xem": 0, "video_ngay": 0, "gioi_thieu": 0, "ref_by": ref_by,
             "ngay_vao": datetime.now().strftime("%d/%m/%Y"),
             "captcha_da_xac_minh": False, "ngay_reset": datetime.now().strftime("%d/%m/%Y"),
-            "dang_xem": False, "tai_khoan": None
+            "dang_xem": False,
+            "tai_khoan": None
         }
         if ref_by and ref_by in users:
             users[ref_by]["gioi_thieu"] += 1
@@ -185,7 +187,6 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⌛ Sau 15 giây nút nhận thưởng sẽ xuất hiện.""",
         parse_mode="HTML", reply_markup=keyboard_mo
     )
-    import asyncio
     await asyncio.sleep(15)
     if not u["dang_xem"]: return
     keyboard_nhan = InlineKeyboardMarkup([[InlineKeyboardButton(f"✅ NHẬN {tien_moi_video:,}đ", callback_data=f"nhan_thuong:{u_id}:{tien_moi_video}")]])
@@ -481,7 +482,10 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
                 """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
 
 Chỉ chấp nhận định dạng:
-MOMO 0396037105 NGUYEN VAN A""",
+MOMO 0396037105 NGUYEN VAN A
+
+Ví dụ trên là hợp lệ.
+Không nhập dấu + hoặc ký tự đặc biệt.""",
                 reply_markup=ReplyKeyboardRemove()
             )
             return NHAP_TAI_KHOAN
@@ -493,6 +497,9 @@ MOMO 0396037105 NGUYEN VAN A""",
         if not so_tk.isdigit():
             await update.message.reply_text(
                 """❌ ĐỊNH DẠNG TÀI KHOẢN KHÔNG ĐÚNG
+
+Chỉ chấp nhận định dạng:
+MOMO 0396037105 NGUYEN VAN A
 
 Số tài khoản chỉ gồm chữ số, không dấu + hay chữ cái.""",
                 reply_markup=ReplyKeyboardRemove()
@@ -600,134 +607,6 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
         ])
     )
 
-async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "❌ Đã hủy.",
-        reply_markup=menu_chinh(update.effective_user.id)
-    )
-    return ConversationHandler.END
-
-async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u_id = update.effective_user.id
-    if u_id != ADMIN_ID: return
-    hanh_dong = context.user_data.get("admin_hanh_dong")
-    text = update.effective_message.text.strip()
-    
-    if hanh_dong == "cong_tat_ca":
-        try:
-            so_tien = int(text.replace(".", "").replace("đ", "").strip())
-        except:
-            await update.message.reply_text("❌ Nhập số tiền hợp lệ!", reply_markup=menu_chinh(u_id))
-            return ConversationHandler.END
-        if so_tien <= 0:
-            await update.message.reply_text("❌ Số tiền phải lớn hơn 0!", reply_markup=menu_chinh(u_id))
-            return ConversationHandler.END
-        
-        dem = 0
-        for uid in list(users.keys()):
-            users[uid]["so_du"] += so_tien
-            dem += 1
-            try:
-                await context.bot.send_message(
-                    chat_id=uid,
-                    text=f"""💰 <b>ĐƯỢC CỘNG TIỀN TỪ HỆ THỐNG!</b>
-
-+{so_tien:,}đ vào số dư của bạn!
-💵 Số dư mới: {users[uid]['so_du']:,}đ""",
-                    parse_mode="HTML"
-                )
-            except: pass
-        
-        await update.message.reply_text(
-            f"""✅ <b>ĐÃ CỘNG TIỀN CHO TẤT CẢ THÀNH CÔNG!</b>
-
-👥 Số người: {dem}
-💰 Mỗi người: +{so_tien:,}đ""",
-            parse_mode="HTML", reply_markup=menu_chinh(u_id)
-        )
-        context.user_data.pop("admin_hanh_dong", None)
-        return ConversationHandler.END
-    
-    parts = text.split()
-    if len(parts) < 2:
-        await update.message.reply_text("❌ Định dạng sai! VD: 6163458267 5000000", reply_markup=menu_chinh(u_id))
-        return ConversationHandler.END
-    try:
-        id_nguoi_dung = int(parts[0])
-        so_tien = int(parts[1])
-    except:
-        await update.message.reply_text("❌ Định dạng sai! VD: 6163458267 5000000", reply_markup=menu_chinh(u_id))
-        return ConversationHandler.END
-    
-    if id_nguoi_dung not in users:
-        await update.message.reply_text("❌ Người dùng không tồn tại!", reply_markup=menu_chinh(u_id))
-        return ConversationHandler.END
-    
-    if hanh_dong == "cong":
-        users[id_nguoi_dung]["so_du"] += so_tien
-        await update.message.reply_text(
-            f"""✅ <b>ĐÃ CỘNG TIỀN THÀNH CÔNG!</b>
-
-🆔 ID: {id_nguoi_dung}
-💰 Cộng: +{so_tien:,}đ
-💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
-            parse_mode="HTML", reply_markup=menu_chinh(u_id)
-        )
-        await context.bot.send_message(
-            chat_id=id_nguoi_dung,
-            text=f"""💰 <b>ĐƯỢC CỘNG TIỀN!</b>
-
-+{so_tien:,}đ vào số dư của bạn!
-💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
-            parse_mode="HTML"
-        )
-    elif hanh_dong == "tru":
-        if users[id_nguoi_dung]["so_du"] < so_tien:
-            await update.message.reply_text("❌ Số dư không đủ!", reply_markup=menu_chinh(u_id))
-            return ConversationHandler.END
-        users[id_nguoi_dung]["so_du"] -= so_tien
-        await update.message.reply_text(
-            f"""✅ <b>ĐÃ TRỪ TIỀN THÀNH CÔNG!</b>
-
-🆔 ID: {id_nguoi_dung}
-💸 Trừ: -{so_tien:,}đ
-💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
-            parse_mode="HTML", reply_markup=menu_chinh(u_id)
-        )
-        await context.bot.send_message(
-            chat_id=id_nguoi_dung,
-            text=f"""💸 <b>BỊ TRỪ TIỀN</b>
-
--{so_tien:,}đ khỏi số dư!
-💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
-            parse_mode="HTML"
-        )
-    context.user_data.pop("admin_hanh_dong", None)
-    return ConversationHandler.END
-
-async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u_id = update.effective_user.id
-    if u_id != ADMIN_ID: return
-    noi_dung = update.effective_message.text
-    thanh_cong = 0
-    for uid in list(users.keys()):
-        try:
-            await context.bot.send_message(
-                chat_id=uid,
-                text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
-
-{noi_dung}""",
-                parse_mode="HTML"
-            )
-            thanh_cong += 1
-        except: pass
-    await update.message.reply_text(
-        f"✅ Đã gửi thông báo cho {thanh_cong}/{len(users)} người dùng!",
-        reply_markup=menu_chinh(u_id)
-    )
-    return ConversationHandler.END
-
 async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -820,34 +699,30 @@ Vui lòng liên hệ hỗ trợ!""",
         return await lien_ket_tai_khoan_bat_dau(update, context)
 
     elif data == "admin_cong_tien":
-        await query.message.reply_text(
-            "💰 <b>CỘNG TIỀN CHO 1 NGƯỜI DÙNG</b>\n\nNhập ID người dùng + số tiền (VD: 6163458267 5000000)",
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
-        )
+        await query.message.reply_text("""💰 <b>CỘNG TIỀN CHO 1 NGƯỜI DÙNG</b>
+
+Nhập ID người dùng + số tiền (VD: 123456789 500000)""", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
         context.user_data["admin_hanh_dong"] = "cong"
         return ADMIN_CONG_SO_DU
 
     elif data == "admin_cong_tat_ca":
-        await query.message.reply_text(
-            "💰 <b>CỘNG TIỀN CHO TẤT CẢ NGƯỜI DÙNG</b>\n\nNhập số tiền muốn cộng cho mọi người (VD: 100000)",
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
-        )
+        await query.message.reply_text("""💰 <b>CỘNG TIỀN CHO TẤT CẢ NGƯỜI DÙNG</b>
+
+Nhập số tiền muốn cộng cho mọi người (VD: 100000)""", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
         context.user_data["admin_hanh_dong"] = "cong_tat_ca"
         return ADMIN_CONG_TAT_CA
 
     elif data == "admin_tru_tien":
-        await query.message.reply_text(
-            "💸 <b>TRỪ TIỀN NGƯỜI DÙNG</b>\n\nNhập ID + số tiền (VD: 6163458267 100000)",
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
-        )
+        await query.message.reply_text("""💸 <b>TRỪ TIỀN NGƯỜI DÙNG</b>
+
+Nhập ID + số tiền (VD: 123456789 100000)""", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
         context.user_data["admin_hanh_dong"] = "tru"
         return ADMIN_TRU_SO_DU
 
     elif data == "admin_gui_tb":
-        await query.message.reply_text(
-            "📢 <b>GỬI THÔNG BÁO TOÀN HỆ THỐNG</b>\n\nNhập nội dung thông báo:",
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
-        )
+        await query.message.reply_text("""📢 <b>GỬI THÔNG BÁO TOÀN HỆ THỐNG</b>
+
+Nhập nội dung thông báo:""", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
         return ADMIN_GUI_TB
 
     elif data == "admin_ds_rut":
@@ -864,7 +739,7 @@ Vui lòng liên hệ hỗ trợ!""",
             return
         nd = "📋 <b>DANH SÁCH CHỜ NẠP/NÂNG CẤP</b>\n\n"
         for ma, yc in nap_tien_cho_duyet.items():
-            nd += f"<code>{ma}</code>\n👤 {yc['ten']} | {yc['gia']:,}đ → {yc['cap_moi']}\n\n"
+            nd += f"<code>{ma}</code>\n👤 {yc['ten']} | {yc['gia']:,}đ → {yc['cap_moi']}\n"
         await query.message.reply_text(nd, parse_mode="HTML")
     elif data == "admin_ds_nguoi":
         if not users:
@@ -875,8 +750,211 @@ Vui lòng liên hệ hỗ trợ!""",
             nd += f"🆔 {uid} | {u['ten']} | 💰 {u['so_du']:,}đ | {u['cap_bac']}\n"
         await query.message.reply_text(nd, parse_mode="HTML")
 
+async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u_id = update.effective_user.id
+    if u_id != ADMIN_ID: return
+    hanh_dong = context.user_data.get("admin_hanh_dong")
+    text = update.effective_message.text.strip()
+    
+    if hanh_dong == "cong_tat_ca":
+        try: so_tien = int(text.replace(".", "").replace("đ", "").strip())
+        except:
+            await update.message.reply_text("❌ Nhập số tiền hợp lệ!", reply_markup=menu_chinh(u_id))
+            return ConversationHandler.END
+        if so_tien <= 0:
+            await update.message.reply_text("❌ Số tiền phải lớn hơn 0!", reply_markup=menu_chinh(u_id))
+            return ConversationHandler.END
+        
+        dem = 0
+        for uid in list(users.keys()):
+            users[uid]["so_du"] += so_tien
+            dem += 1
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"""💰 <b>ĐƯỢC CỘNG TIỀN TỪ HỆ THỐNG!</b>
+
++{so_tien:,}đ vào số dư của bạn!
+💵 Số dư mới: {users[uid]['so_du']:,}đ""",
+                    parse_mode="HTML"
+                )
+            except: pass
+        
+        await update.message.reply_text(
+            f"""✅ <b>ĐÃ CỘNG TIỀN CHO TẤT CẢ THÀNH CÔNG!</b>
+
+👥 Số người: {dem}
+💰 Mỗi người: +{so_tien:,}đ""",
+            parse_mode="HTML", reply_markup=menu_chinh(u_id)
+        )
+        context.user_data.pop("admin_hanh_dong", None)
+        return ConversationHandler.END
+    
+    try:
+        id_nguoi_dung, so_tien = text.split()
+        id_nguoi_dung = int(id_nguoi_dung)
+        so_tien = int(so_tien)
+    except:
+        await update.message.reply_text("❌ Định dạng sai! VD: 123456789 500000", reply_markup=menu_chinh(u_id))
+        return ConversationHandler.END
+    if id_nguoi_dung not in users:
+        await update.message.reply_text("❌ Người dùng không tồn tại!", reply_markup=menu_chinh(u_id))
+        return ConversationHandler.END
+    
+    if hanh_dong == "cong":
+        users[id_nguoi_dung]["so_du"] += so_tien
+        await update.message.reply_text(
+            f"""✅ <b>ĐÃ CỘNG TIỀN THÀNH CÔNG!</b>
+
+🆔 ID: {id_nguoi_dung}
+💰 Cộng: +{so_tien:,}đ
+💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
+            parse_mode="HTML", reply_markup=menu_chinh(u_id)
+        )
+        await context.bot.send_message(
+            chat_id=id_nguoi_dung,
+            text=f"""💰 <b>ĐƯỢC CỘNG TIỀN!</b>
+
++{so_tien:,}đ vào số dư của bạn!
+💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
+            parse_mode="HTML"
+        )
+    elif hanh_dong == "tru":
+        if users[id_nguoi_dung]["so_du"] < so_tien:
+            await update.message.reply_text("❌ Số dư không đủ!", reply_markup=menu_chinh(u_id))
+            return ConversationHandler.END
+        users[id_nguoi_dung]["so_du"] -= so_tien
+        await update.message.reply_text(
+            f"""✅ <b>ĐÃ TRỪ TIỀN THÀNH CÔNG!</b>
+
+🆔 ID: {id_nguoi_dung}
+💸 Trừ: -{so_tien:,}đ
+💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
+            parse_mode="HTML", reply_markup=menu_chinh(u_id)
+        )
+        await context.bot.send_message(
+            chat_id=id_nguoi_dung,
+            text=f"""💸 <b>BỊ TRỪ TIỀN</b>
+
+-{so_tien:,}đ khỏi số dư!
+💵 Số dư mới: {users[id_nguoi_dung]['so_du']:,}đ""",
+            parse_mode="HTML"
+        )
+    context.user_data.pop("admin_hanh_dong", None)
+    return ConversationHandler.END
+
+async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u_id = update.effective_user.id
+    if u_id != ADMIN_ID:
+        return
+    noi_dung = update.effective_message.text
+    thanh_cong = 0
+    for uid in list(users.keys()):
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=f"""📢 <b>THÔNG BÁO HỆ THỐNG</b>
+
+{noi_dung}""",
+                parse_mode="HTML"
+            )
+            thanh_cong += 1
+        except Exception:
+            pass
+    await update.message.reply_text(
+        f"✅ Đã gửi thông báo cho {thanh_cong}/{len(users)} người dùng!",
+        reply_markup=menu_chinh(u_id)
+    )
+    return ConversationHandler.END
+
+async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text(
+        "❌ Đã hủy.",
+        reply_markup=menu_chinh(update.effective_user.id)
+    )
+    return ConversationHandler.END
+
 # === KHAI BÁO HANDLER & CHẠY BOT ===
 def main():
     print("🔄 Đang khởi động BOT...")
     
-    token = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafex
+    token = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
+    if token == "ĐIỀN_TOKEN_BOT_CỦA_BẠN VÀO ĐÂY":
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
+    
+    application = ApplicationBuilder().token(token).build()
+
+    # Handler hội thoại
+    rut_tien_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau),
+            CallbackQueryHandler(lien_ket_tai_khoan_bat_dau, pattern="^lien_ket_tai_khoan$")
+        ],
+        states={
+            NHAP_TAI_KHOAN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_thong_tin_tai_khoan)
+            ]
+        },
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), rut_tien_huy)]
+    )
+
+    nap_nang_cap_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(da_chuyen_khoan_callback, pattern="^dachuyen:")],
+        states={NAP_GUI_ANH: [MessageHandler(filters.ALL & ~filters.COMMAND, nhan_anh_chuyen_khoan)]},
+        fallbacks=[]
+    )
+
+    admin_cong_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tien$")],
+        states={ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_cong_tat_ca_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tat_ca$")],
+        states={ADMIN_CONG_TAT_CA: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_tru_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_tru_tien$")],
+        states={ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_gui_tb_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_gui_tb$")],
+        states={ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)]},
+        fallbacks=[MessageHandler(filters.Regex("^❌ Đã hủy$"), huy_hanh_dong_admin)]
+    )
+
+    # Đăng ký lệnh
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Regex("^👤 Hồ Sơ$"), ho_so))
+    application.add_handler(MessageHandler(filters.Regex("^🔍 Xem TikTok$"), xem_tiktok))
+    application.add_handler(MessageHandler(filters.Regex("^👥 Khu Vực Leader$"), khu_vuc_leader))
+    application.add_handler(MessageHandler(filters.Regex("^👑 Nâng Cấp Bậc$"), nang_cap))
+    application.add_handler(MessageHandler(filters.Regex("^🎧 Hỗ Trợ$"), ho_tro))
+    application.add_handler(MessageHandler(filters.Regex("^🔐 Nhập CaptCha$"), captcha))
+    application.add_handler(MessageHandler(filters.Regex("^🎛 QUẢN LÝ ADMIN$"), trang_quan_ly_admin))
+
+    # Callback query
+    application.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern="^nhan_thuong:"))
+    application.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern="^goi_"))
+    application.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no):"))
+    application.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_"))
+
+    # Hội thoại
+    application.add_handler(rut_tien_conv)
+    application.add_handler(nap_nang_cap_conv)
+    application.add_handler(admin_cong_conv)
+    application.add_handler(admin_cong_tat_ca_conv)
+    application.add_handler(admin_tru_conv)
+    application.add_handler(admin_gui_tb_conv)
+
+    print("✅ BOT đã sẵn sàng!")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
