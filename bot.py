@@ -25,12 +25,12 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGpYvYEvFAW5HzUickEeJ3rg54lvHQkXkk")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772"))
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
-LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
-RUT_TOI_THIEU = 50_000
-DB_FILE = os.getenv("DB_FILE", "bot_data.db")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGpYvYEvFAW5HzUickEeJ3rg54lvHQkXkk") 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "") 
+LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot") 
+RUT_TOI_THIEU = 50_000 
+DB_FILE = os.getenv("DB_FILE", "bot_data.db") 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 if not BOT_TOKEN:
@@ -1402,7 +1402,7 @@ def build_application():
     app.add_handler(
         CallbackQueryHandler(
             xu_ly_admin_callback,
-            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no|admin_ds_rut|admin_ds_nap|admin_ds_nguoi)$",
+            pattern=r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no)(:.+)?$|^(admin_ds_rut|admin_ds_nap|admin_ds_nguoi)$",
         )
     )
 
