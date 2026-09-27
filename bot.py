@@ -9,9 +9,9 @@ from telegram.ext import (
 )
 
 # ========================================
-BOT_TOKEN = "TOKEN_CUA_BAN"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKEN_CUA_BAN")  # Đặt token thật tại đây
 ADMIN_ID = 6163458267
-KENH_YEU_CAU = None
+KENH_YEU_CAU = None  # Đặt @ten_kenh nếu yêu cầu tham gia kênh
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
 RUT_TOI_THIEU = 50000
 # Trạng thái hội thoại
@@ -227,8 +227,8 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = update.effective_user.id
     u = users[u_id]
-    bot_username = await context.bot.get_me()
-    link = f"https://t.me/{bot_username.username}?start={u_id}"
+    me = await context.bot.get_me()
+    link = f"https://t.me/{me.username}?start={u_id}"
     
     thong_tin_cap = ""
     for cap in CAP_BAC_CONFIG:
@@ -875,6 +875,4 @@ async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 def main():
     print("🔄 Đang khởi động BOT...")
     
-    # Lấy token từ biến môi trường hoặc dùng trực tiếp
-    token = os.getenv("BOT_TOKEN", BOT_TOKEN)
-    
+    token = os.get
