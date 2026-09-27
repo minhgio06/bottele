@@ -1124,8 +1124,8 @@ async def lien_ket_tai_khoan_bat_dau(update: Update, context: ContextTypes.DEFAU
         """🔗 LIÊN KẾT TÀI KHOẢN
 
 Gửi theo dạng:
-MOMO 0396037105 NGUYEN VAN A
-ACB 25607451 NGUYEN VAN A
+MOMO 0396037105 HA QUANG MINH
+ACB 25607451 HA QUANG MINH
 
 ⚠️ Số tài khoản chỉ gồm chữ số.
 Tên chủ tài khoản viết sau số tài khoản.""",
