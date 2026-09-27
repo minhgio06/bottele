@@ -3,6 +3,9 @@ import html
 import os
 import time
 import sqlite3
+import logging
+import signal
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -37,12 +40,16 @@ XAC_MINH_NGAN_HANG = os.getenv("XAC_MINH_NGAN_HANG", "ACB")
 XAC_MINH_CHU_TK = os.getenv("XAC_MINH_CHU_TK", "HA QUANG MINH")
 XAC_MINH_SO_TK = os.getenv("XAC_MINH_SO_TK", "25607451")
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
+# Render/polling: chỉ chạy 1 instance/worker với BOT_TOKEN này.
+# Không chạy đồng thời bot.py ở máy cá nhân/VPS/Render service khác.
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
-if not BOT_TOKEN:
-    raise RuntimeError("Thiếu biến môi trường BOT_TOKEN.")
-if not ADMIN_ID:
-    raise RuntimeError("Thiếu biến môi trường ADMIN_ID.")
+# Logging production-friendly: Render sẽ giữ log để truy lỗi.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+LOGGER = logging.getLogger("tiktok_bot")
 
 # Conversation states
 NHAP_TAI_KHOAN = 1
@@ -107,6 +114,10 @@ HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 def db():
     conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -196,6 +207,12 @@ def init_db():
             )
         except sqlite3.OperationalError:
             pass
+
+        # Index giúp danh sách admin và kiểm tra đơn nhanh hơn khi dữ liệu lớn.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_ref_by ON users(ref_by)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status, thoi_gian)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_deposits_status ON deposits(status, thoi_gian)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_verification_status ON verification_requests(status, thoi_gian)")
 
 
 def row_to_user(row):
@@ -583,54 +600,92 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("❌ Không phải phiên của bạn!", show_alert=True)
         return
 
-    u = get_user(uid)
-    if not u or not u["dang_xem"]:
-        await query.answer("❌ Phiên đã hết hạn.", show_alert=True)
-        return
-
     if context.user_data.get("watch_message_id") != message_id:
-        await query.answer("❌ Phiên không hợp lệ.", show_alert=True)
+        await query.answer("❌ Phiên không hợp lệ!", show_alert=True)
         return
 
-    await query.answer()
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not row:
+            conn.rollback()
+            await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
+            return
 
-    reset_daily_if_needed(u)
-    cfg = CAP_BAC_CONFIG[u["cap_bac"]]
+        # Reset lượt theo ngày ngay trong cùng transaction.
+        current_day = today_vn()
+        if row["ngay_reset"] != current_day:
+            conn.execute(
+                "UPDATE users SET video_ngay=0, ngay_reset=?, dang_xem=0 WHERE id=?",
+                (current_day, uid),
+            )
+            row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
 
-    if u["video_ngay"] >= cfg["gioi_han_xem_ngay"]:
-        u["dang_xem"] = False
-        save_user(u)
-        await query.answer("❌ Đã hết lượt hôm nay.", show_alert=True)
-        return
+        if not row["dang_xem"]:
+            conn.rollback()
+            await query.answer("❌ Phiên đã hết hạn hoặc đã nhận thưởng.", show_alert=True)
+            return
 
-    tien = cfg["xu_moi_video"]
-    u["video_da_xem"] += 1
-    u["video_ngay"] += 1
-    u["so_du"] += tien
-    u["dang_xem"] = False
-    save_user(u)
+        cfg = CAP_BAC_CONFIG.get(row["cap_bac"], CAP_BAC_CONFIG["Thành viên"])
+        if row["video_ngay"] >= cfg["gioi_han_xem_ngay"]:
+            conn.execute("UPDATE users SET dang_xem=0 WHERE id=?", (uid,))
+            conn.commit()
+            await query.answer("❌ Đã hết lượt hôm nay.", show_alert=True)
+            return
 
-    ancestor_id = u["ref_by"]
-    for rate in (HOA_HONG["f1"], HOA_HONG["f2"], HOA_HONG["f3"]):
-        if not ancestor_id:
-            break
-        parent = get_user(ancestor_id)
-        if not parent:
-            break
-        hoa_hong = int(tien * rate)
-        if hoa_hong > 0:
-            parent["so_du"] += hoa_hong
-            save_user(parent)
-        ancestor_id = parent["ref_by"]
+        tien = int(cfg["xu_moi_video"])
+
+        # Atomic claim: 2 lần bấm cùng lúc chỉ một lần được cộng tiền.
+        changed = conn.execute(
+            """
+            UPDATE users
+            SET video_da_xem=video_da_xem+1,
+                video_ngay=video_ngay+1,
+                so_du=so_du+?,
+                dang_xem=0
+            WHERE id=? AND dang_xem=1 AND video_ngay < ?
+            """,
+            (tien, uid, cfg["gioi_han_xem_ngay"]),
+        ).rowcount
+
+        if changed != 1:
+            conn.rollback()
+            await query.answer("❌ Phần thưởng đã được xử lý.", show_alert=True)
+            return
+
+        updated = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+
+        # Hoa hồng F1/F2/F3 cũng nằm trong cùng transaction.
+        ancestor_id = updated["ref_by"]
+        visited = {uid}
+        for rate in (HOA_HONG["f1"], HOA_HONG["f2"], HOA_HONG["f3"]):
+            if not ancestor_id or ancestor_id in visited:
+                break
+            parent = conn.execute(
+                "SELECT id, ref_by FROM users WHERE id=?", (ancestor_id,)
+            ).fetchone()
+            if not parent:
+                break
+            visited.add(parent["id"])
+            commission = int(tien * rate)
+            if commission > 0:
+                conn.execute(
+                    "UPDATE users SET so_du=so_du+? WHERE id=?",
+                    (commission, parent["id"]),
+                )
+            ancestor_id = parent["ref_by"]
+
+        conn.commit()
 
     context.user_data.pop("watch_message_id", None)
+    await query.answer("✅ Đã cộng thưởng!", show_alert=False)
     await query.edit_message_text(
         f"""✅ <b>NHẬN THƯỞNG THÀNH CÔNG</b>
 
-🎬 Video hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']}
+🎬 Video hôm nay: {updated['video_ngay']}/{cfg['gioi_han_xem_ngay']}
 ⏱ Đã xem đủ: 15 giây
 💰 Thưởng: +{tien:,}đ
-💵 Số dư: {u['so_du']:,}đ""",
+💵 Số dư: {updated['so_du']:,}đ""",
         parse_mode="HTML",
     )
 
@@ -702,12 +757,12 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     g = GOI_NANG_CAP[data]
-    ma_nap = f"{g['ma_chung']} {u['id']}"
+    ma_nap = f"{g['ma_chung']} {u['id']} {int(time.time())}"
 
     with db() as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO deposits
+            INSERT INTO deposits
             (request_id, user_id, ten, goi_key, cap_moi, gia, thoi_gian, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
@@ -2084,7 +2139,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print("BOT ERROR:", repr(context.error))
+    LOGGER.exception("Unhandled Telegram error", exc_info=context.error)
 
 
 # ============================================================
@@ -2272,31 +2327,89 @@ def build_application():
 
 
 async def run_bot():
-    application = build_application()
+    """
+    Production startup for Render.
 
+    Telegram getUpdates/polling allows only ONE active consumer for a bot
+    token. If another Render service, worker, VPS, Termux or local process
+    uses the same BOT_TOKEN, Telegram returns Conflict.
+    """
+    application = build_application()
     await application.initialize()
-    await application.bot.delete_webhook(drop_pending_updates=True)
+
+    # Polling and webhook are mutually exclusive.
+    try:
+        webhook_info = await application.bot.get_webhook_info()
+        if webhook_info.url:
+            print(f"Phát hiện webhook cũ: {webhook_info.url} -> đang xoá...")
+        await application.bot.delete_webhook(drop_pending_updates=True)
+    except Exception as exc:
+        print("Không thể xoá webhook cũ:", repr(exc))
+        raise
+
     await application.start()
 
     try:
+        print("Đang khởi động Telegram polling...")
         await application.updater.start_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
+            poll_interval=1.0,
         )
-        print("Bot đang chạy...")
-        await asyncio.Event().wait()
+        print("Bot đang chạy và chờ update.")
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def request_shutdown():
+            if not stop_event.is_set():
+                LOGGER.info("Nhận tín hiệu dừng, đang shutdown an toàn...")
+                stop_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, request_shutdown)
+            except (NotImplementedError, RuntimeError):
+                pass
+
+        await stop_event.wait()
+
+    except Exception as exc:
+        message = str(exc)
+        if "terminated by other getUpdates request" in message or "Conflict" in message:
+            LOGGER.error(
+                "TELEGRAM CONFLICT: BOT_TOKEN đang được một tiến trình khác "
+                "polling. Render phải chỉ có 1 worker/instance và không được "
+                "chạy cùng token ở VPS/Termux/máy cá nhân."
+            )
+        raise
+
     finally:
-        if application.updater.running:
-            await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+        try:
+            if application.updater and application.updater.running:
+                await application.updater.stop()
+        finally:
+            try:
+                await application.stop()
+            finally:
+                await application.shutdown()
 
 
 if __name__ == "__main__":
     try:
+        if not BOT_TOKEN:
+            raise RuntimeError(
+                "Thiếu BOT_TOKEN. Hãy thêm BOT_TOKEN vào Environment Variables của Render."
+            )
+        if not ADMIN_ID:
+            raise RuntimeError(
+                "Thiếu ADMIN_ID hoặc ADMIN_ID không hợp lệ. "
+                "Hãy thêm ADMIN_ID vào Environment Variables của Render."
+            )
+
+        init_db()
         asyncio.run(run_bot())
+
     except KeyboardInterrupt:
         print("Bot đã dừng.")
     except Exception as exc:
         print("BOT START ERROR:", repr(exc))
-        raise
