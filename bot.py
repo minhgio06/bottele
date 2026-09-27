@@ -26,7 +26,7 @@ from telegram.ext import (
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGpYvYEvFAW5HzUickEeJ3rg54lvHQkXkk")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772"))
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@minhpro19")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
 RUT_TOI_THIEU = 50_000
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
