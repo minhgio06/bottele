@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 # ===================== CẤU HÌNH =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ĐIỀN_TOKEN_BOT_CỦA_BẠN_VÀY_ĐÂY")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
 ADMIN_ID = 6163458267
 KENH_YEU_CAU = None
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
