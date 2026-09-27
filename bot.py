@@ -874,3 +874,7 @@ async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 # === KHAI BÁO HANDLER & CHẠY BOT ===
 def main():
     print("🔄 Đang khởi động BOT...")
+    
+    # Lấy token từ biến môi trường hoặc dùng trực tiếp
+    token = os.getenv("BOT_TOKEN", BOT_TOKEN)
+    
