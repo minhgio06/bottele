@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 from datetime import datetime
@@ -26,7 +27,7 @@ from telegram.ext import (
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGpYvYEvFAW5HzUickEeJ3rg54lvHQkXkk")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772"))
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@minhpro19")
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://t.me/cayxuonline_bot")
 RUT_TOI_THIEU = 50_000
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
@@ -1418,5 +1419,10 @@ def build_application():
 
 
 if __name__ == "__main__":
+    # Python 3.14 không tự tạo current event loop cho MainThread.
+    # Tạo loop trước khi gọi run_polling() để python-telegram-bot 21.7 hoạt động ổn định.
     asyncio.set_event_loop(asyncio.new_event_loop())
+
+    application = build_application()
+    print("Bot đang chạy...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
