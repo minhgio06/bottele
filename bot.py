@@ -1,185 +1,162 @@
-# --------------------------
-# BOT BÁN HÀNG TELEGRAM
-# Hoàn toàn tương thích Python 3.8+
-# --------------------------
-
-from telegram import Update
+import os
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     filters,
-    ContextTypes,
-    ConversationHandler
+    ContextTypes
 )
 
-# ============= THAY THÔNG TIN CỦA BẠN Ở ĐÂY =============
-BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"       # Thay bằng Token từ @BotFather
-ADMIN_ID = 6163458267              # Thay bằng số ID từ @getmyid_bot
-# ==========================================================
+# ===== CẤU HÌNH =====
+BOT_TOKEN = os.getenv("8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
+ADMIN_ID = int(os.getenv("6163458267", "0"))
 
-# DANH SÁCH SẢN PHẨM
-SAN_PHAM = [
-    {"id": 1, "ten": "Áo thun nam", "gia": 99000, "mo_ta": "Chất cotton mát mẻ"},
-    {"id": 2, "ten": "Quần jean nữ", "gia": 199000, "mo_ta": "Kiểu dáng hiện đại"},
-    {"id": 3, "ten": "Giày thể thao", "gia": 350000, "mo_ta": "Đế bền, đi nhẹ"},
+# ===== DANH SÁCH GÓI DỊCH VỤ =====
+GOI_DICH_VU = [
+    {"id": 1, "ten": "Gói 100 Lượt Xem", "gia": 15000, "mo_ta": "Nhanh chóng, ổn định, không giảm"},
+    {"id": 2, "ten": "Gói 500 Lượt Xem", "gia": 60000, "mo_ta": "Tăng tương tác tự nhiên"},
+    {"id": 3, "ten": "Gói 1000 Lượt Xem", "gia": 100000, "mo_ta": "Phổ biến nhanh, an toàn tài khoản"},
+    {"id": 4, "ten": "Gói 5000 Lượt Xem", "gia": 450000, "mo_ta": "Tiết kiệm nhất, ưu tiên hiển thị"},
 ]
 
-# Các trạng thái
-NHAP_SO_LUONG, NHAP_THONG_TIN = range(2)
-
-# === Bắt đầu ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.effective_user.first_name
-    await update.message.reply_text(
-        f"👋 Xin chào {name}!\n"
-        "🛒 CỬA HÀNG CỦA TÔI\n\n"
-        "📌 Lệnh có sẵn:\n"
-        "/danhsach → Xem sản phẩm\n"
-        "/huongdan → Hướng dẫn mua hàng"
+# ===== MENU NÚT BẤM =====
+def tao_menu():
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("📋 Xem Dịch Vụ")],
+            [KeyboardButton("🛒 Đặt Hàng"), KeyboardButton("💳 Thanh Toán")],
+            [KeyboardButton("📞 Hỗ Trợ")]
+        ],
+        resize_keyboard=True
     )
 
-# === Danh sách sản phẩm ===
-async def danh_sach(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "📋 DANH SÁCH SẢN PHẨM:\n\n"
-    for sp in SAN_PHAM:
-        text += f"🔹 {sp['id']}. {sp['ten']}\n"
-        text += f"   💰 Giá: {sp['gia']:,} VNĐ\n"
-        text += f"   → Gõ: /mua{sp['id']}\n\n"
-    text += "💡 Ví dụ: muốn mua sản phẩm số 1 → gõ /mua1"
+# ===== BẮT ĐẦU =====
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_text(
+        f"👋 Xin chào {user.first_name}!\n\n"
+        "✨ TikTop View — Tăng lượt xem & tương tác TikTok ✨\n\n"
+        "Chúng tôi cung cấp dịch vụ tăng lượt xem nhanh chóng, ổn định & an toàn.\n"
+        "Chọn chức năng bên dưới để bắt đầu 👇",
+        reply_markup=tao_menu()
+    )
+
+# ===== XEM DỊCH VỤ =====
+async def xem_dich_vu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "📋 === DANH SÁCH DỊCH VỤ ===\n\n"
+    for g in GOI_DICH_VU:
+        text += f"🔹 {g['id']}. {g['ten']}\n"
+        text += f"   💰 Giá: {g['gia']:,} VNĐ\n"
+        text += f"   📝 {g['mo_ta']}\n"
+        text += f"   → Gõ /dat{g['id']} để đặt\n\n"
+    text += "💡 Ví dụ: muốn đặt Gói 1 → gõ /dat1"
     await update.message.reply_text(text)
 
-# === Bắt đầu đặt hàng ===
-async def mua_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===== ĐẶT HÀNG =====
+async def dat_hang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        ma_sp = int(update.message.text.strip().replace("/mua", ""))
-        sp = next((s for s in SAN_PHAM if s["id"] == ma_sp), None)
-    except Exception as e:
-        await update.message.reply_text("❌ Lỗi! Gõ ví dụ: /mua1")
-        return ConversationHandler.END
-
-    if not sp:
-        await update.message.reply_text("❌ Sản phẩm không tồn tại!")
-        return ConversationHandler.END
-
-    context.user_data["san_pham"] = sp
-    await update.message.reply_text(
-        f"✅ Bạn chọn: {sp['ten']}\n"
-        f"💰 Đơn giá: {sp['gia']:,} VNĐ\n\n"
-        "👉 Nhập số lượng muốn mua:"
-    )
-    return NHAP_SO_LUONG
-
-# === Nhập số lượng ===
-async def nhap_so_luong(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        so_luong = int(update.message.text.strip())
-        if so_luong <= 0:
-            raise ValueError("Số lượng âm")
+        ma = int(update.message.text.replace("/dat", ""))
+        goi = next((g for g in GOI_DICH_VU if g["id"] == ma), None)
     except:
-        await update.message.reply_text("⚠️ Vui lòng nhập số lớn hơn 0:")
-        return NHAP_SO_LUONG
+        await update.message.reply_text("❌ Lệnh không hợp lệ! Gõ ví dụ: /dat1")
+        return
+    
+    if not goi:
+        await update.message.reply_text("❌ Gói dịch vụ không tồn tại!")
+        return
 
-    context.user_data["so_luong"] = so_luong
-    sp = context.user_data["san_pham"]
+    context.user_data["goi_dang_chon"] = goi
     await update.message.reply_text(
-        f"✅ Số lượng: {so_luong}\n"
-        f"💵 Tạm tính: {sp['gia'] * so_luong:,} VNĐ\n\n"
-        "👉 Nhập thông tin giao hàng:\n"
-        "Họ tên + Số điện thoại + Địa chỉ"
+        f"✅ Bạn chọn: {goi['ten']}\n"
+        f"💰 Thành tiền: {goi['gia']:,} VNĐ\n\n"
+        "👉 Vui lòng gửi LINK VIDEO TikTok của bạn:"
     )
-    return NHAP_THONG_TIN
 
-# === Nhập thông tin & Xác nhận ===
-async def nhap_thong_tin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    thong_tin = update.message.text.strip()
-    sp = context.user_data["san_pham"]
-    sl = context.user_data["so_luong"]
-    tong_tien = sp["gia"] * sl
+# ===== NHẬN LINK & XÁC NHẬN =====
+async def nhan_tin_nhan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    goi = context.user_data.get("goi_dang_chon")
+    if not goi:
+        text = update.message.text
+        if text == "📋 Xem Dịch Vụ":
+            await xem_dich_vu(update, context)
+        elif text == "🛒 Đặt Hàng":
+            await update.message.reply_text("👉 Xem danh sách dịch vụ trước:\n📋 Nhấn nút trên hoặc gõ /dichvu")
+        elif text == "💳 Thanh Toán":
+            await update.message.reply_text(
+                "💳 === THÔNG TIN THANH TOÁN ===\n\n"
+                "🏦 Ngân hàng: Vietcombank\n"
+                "📌 Số tài khoản: 1234567890\n"
+                "👤 Tên: NGUYEN VAN A\n"
+                "💵 Số tiền: Chờ xác nhận đơn hàng\n\n"
+                "Nội dung chuyển khoản: [Tên gói] + [Link video]\n"
+                "Gửi ảnh biên lai cho chúng tôi để kích hoạt! ✅"
+            )
+        elif text == "📞 Hỗ Trợ":
+            await update.message.reply_text(
+                "📞 === HỖ TRỢ KHÁCH HÀNG ===\n\n"
+                "💬 Liên hệ: @Admin_TikTopView\n"
+                "⏰ Hoạt động: 8:00 - 22:00 hàng ngày\n"
+                "📩 Phản hồi nhanh nhất trong 15 phút!"
+            )
+        elif text == "/dichvu":
+            await xem_dich_vu(update, context)
+        else:
+            await update.message.reply_text(
+                "⚠️ Tôi không hiểu yêu cầu này.\n"
+                "Chọn chức năng từ menu bên dưới nhé 👇",
+                reply_markup=tao_menu()
+            )
+        return
+
+    # Nếu đang chọn gói → nhận link
+    link = update.message.text.strip()
     user = update.effective_user
-
-    don_hang = f"""
+    thong_bao = f"""
 🛒 === ĐƠN HÀNG MỚI ===
 
-👤 Khách hàng: {user.first_name}
-🆔 ID Telegram: {user.id}
+👤 Khách: {user.first_name}
+🆔 ID: {user.id}
+📌 Tên người dùng: @{user.username or "không có"}
 
-📦 Sản phẩm: {sp['ten']}
-🔢 Số lượng: {sl}
-💰 Đơn giá: {sp['gia']:,} VNĐ
-💵 TỔNG TIỀN: {tong_tien:,} VNĐ
+📦 Dịch vụ: {goi['ten']}
+💰 Thành tiền: {goi['gia']:,} VNĐ
+🔗 Link video: {link}
 
-📍 Thông tin giao hàng:
-{thong_tin}
+⏳ Trạng thái: Chờ xác nhận thanh toán
 """
 
     # Gửi cho khách
     await update.message.reply_text(
-        f"✅ Đặt hàng thành công!\n{don_hang}\n"
-        "Chúng tôi sẽ liên hệ xác nhận sớm nhất. Cảm ơn bạn! ❤️"
+        f"✅ Đơn hàng đã ghi nhận!\n{thong_bao}\n"
+        "💳 Vui lòng thanh toán theo thông tin:\n"
+        "🏦 Vietcombank - 1234567890 - NGUYEN VAN A\n"
+        "💵 Số tiền: " + str(f"{goi['gia']:,}") + " VNĐ\n"
+        "📝 Nội dung: " + goi['ten'] + " + Link video\n"
+        "Gửi ảnh biên lại ở đây để kích hoạt ngay! 🚀"
     )
 
-    # Gửi cho chủ cửa hàng
-    try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=don_hang)
-    except Exception as e:
-        print(f"Không gửi được thông báo cho quản trị: {e}")
+    # Gửi cho quản trị
+    if ADMIN_ID:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=thong_bao)
 
-    # Xóa dữ liệu
     context.user_data.clear()
-    return ConversationHandler.END
 
-# === Hủy đặt hàng ===
-async def huy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text("❌ Đã hủy đặt hàng!")
-    return ConversationHandler.END
-
-# === Hướng dẫn ===
-async def huong_dan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📖 Hướng dẫn mua hàng:\n\n"
-        "1️⃣ Gõ /danhsach xem sản phẩm\n"
-        "2️⃣ Gõ /mua + mã (VD: /mua1)\n"
-        "3️⃣ Nhập số lượng\n"
-        "4️⃣ Nhập thông tin giao hàng\n"
-        "5️⃣ Hoàn thành! ✅\n\n"
-        "Bạn sẽ nhận được thông báo, đồng thời tôi cũng nhận được đơn hàng."
-    )
-
-# === Chạy chương trình ===
+# ===== CHẠY BOT =====
 def main():
-    print("🔄 Đang khởi tạo bot...")
-    
-    # Kiểm tra cấu hình
-    if BOT_TOKEN == "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA":
-        print("❌ LỖI: Bạn chưa nhập BOT_TOKEN!")
-        print("   Mở file, thay TOKEN_CUA_BAN bằng Token thật từ @BotFather")
+    print("🔄 Đang khởi động TikTop View...")
+    if not BOT_TOKEN:
+        print("❌ Chưa đặt BOT_TOKEN!")
         return
-    if ADMIN_ID == 6163458267:
-        print("⚠️ LƯU Ý: Bạn chưa đổi ADMIN_ID, thông báo đơn hàng sẽ không gửi được!")
-        print("   Nhắn @getmyid_bot để lấy ID thật của bạn")
 
-    # Tạo ứng dụng
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Xử lý đặt hàng
-    dat_hang_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r'^/mua\d+$'), mua_bat_dau)],
-        states={
-            NHAP_SO_LUONG: [MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_so_luong)],
-            NHAP_THONG_TIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_thong_tin)],
-        },
-        fallbacks=[CommandHandler("huy", huy)]
-    )
-
-    # Đăng ký lệnh
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("danhsach", danh_sach))
-    app.add_handler(CommandHandler("huongdan", huong_dan))
-    app.add_handler(dat_hang_handler)
+    app.add_handler(CommandHandler("dichvu", xem_dich_vu))
+    app.add_handler(CommandHandler("dat", dat_hang))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, nhan_tin_nhan))
 
-    print("✅ BOT ĐANG CHẠY! Nhấn Ctrl+C để dừng")
+    print("✅ TikTop View BOT ĐANG CHẠY!")
     app.run_polling()
 
 if __name__ == "__main__":
