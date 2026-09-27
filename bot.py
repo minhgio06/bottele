@@ -957,4 +957,17 @@ def main():
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    print("🔄 Đang khởi động BOT...")
+    # Ngăn chạy nhiều lần
+    import sys
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+        # ... (giữ nguyên các handler)
+        print("✅ BOT đã sẵn sàng!")
+        application.run_polling()
+    except Exception as e:
+        if "Conflict" in str(e):
+            print("⚠️ Phát hiện phiên bản khác đang chạy! Thoát...")
+        else:
+            print(f"❌ Lỗi: {e}")
+        sys.exit(1)
