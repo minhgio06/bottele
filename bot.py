@@ -787,11 +787,12 @@ async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Chọn chức năng bên dưới!", reply_markup=menu_chinh(u_id))
 
 def main():
-    print("="*50)
+    print("=" * 50)
     print("🤖 TIKTOP VIEW — ĐANG KHỞI ĐỘNG...")
-    print("="*50)
+    print("=" * 50)
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Các ConversationHandler
     rut_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau)],
         states={
@@ -838,4 +839,11 @@ def main():
     app.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^duyet_|^admin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_nut))
 
-    print("✅ BOT KH
+    # === DÒNG 841 ĐÃ SỬA ===
+    print("✅ BOT KHỞI ĐỘNG THÀNH CÔNG!")
+    print("🌐 Bot đang chạy...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
