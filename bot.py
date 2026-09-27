@@ -8,7 +8,7 @@ from telegram.ext import (
 )
 
 # ===================== CẤU HÌNH =====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6163458267"))
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU")
 LINK_VIDEO = "https://t.me/cayxuonline_bot"
@@ -873,4 +873,9 @@ def main():
     
     token = BOT_TOKEN
     if not token:
-        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
+        return
+    
+    application = ApplicationBuilder().token(token).build()
+
+    # Handler
