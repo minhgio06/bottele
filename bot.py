@@ -33,6 +33,9 @@ KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
+XAC_MINH_NGAN_HANG = os.getenv("XAC_MINH_NGAN_HANG", "ACB")
+XAC_MINH_CHU_TK = os.getenv("XAC_MINH_CHU_TK", "HA QUANG MINH")
+XAC_MINH_SO_TK = os.getenv("XAC_MINH_SO_TK", "25607451")
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -48,6 +51,7 @@ ADMIN_TRU_SO_DU = 11
 ADMIN_GUI_TB = 12
 ADMIN_CONG_TAT_CA = 13
 NAP_GUI_ANH = 20
+XAC_MINH_GUI_ANH = 21
 
 CAP_BAC_CONFIG = {
     "Thành viên": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 2, "thuong_gioi_thieu": 100},
@@ -172,7 +176,8 @@ def init_db():
                 ten TEXT NOT NULL,
                 phi INTEGER NOT NULL,
                 thoi_gian TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending'
+                status TEXT NOT NULL DEFAULT 'pending',
+                photo_file_id TEXT
             )
         """)
 
@@ -181,6 +186,13 @@ def init_db():
             conn.execute(
                 "ALTER TABLE users ADD COLUMN xac_minh_nguoi_that "
                 "INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute(
+                "ALTER TABLE verification_requests ADD COLUMN photo_file_id TEXT"
             )
         except sqlite3.OperationalError:
             pass
@@ -877,10 +889,7 @@ async def xac_minh_nguoi_that_callback(
         return
 
     if u.get("xac_minh_nguoi_that", 0):
-        await query.answer(
-            "✅ Bạn đã được xác minh.",
-            show_alert=True,
-        )
+        await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
         return
 
     with db() as conn:
@@ -905,55 +914,114 @@ async def xac_minh_nguoi_that_callback(
                 VALUES (?, ?, ?, ?, ?, 'pending')
                 """,
                 (
-                    request_id,
-                    u["id"],
-                    u["ten"],
-                    PHI_XAC_MINH,
+                    request_id, u["id"], u["ten"], PHI_XAC_MINH,
                     now_vn().strftime("%d/%m/%Y %H:%M"),
                 ),
             )
 
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "✅ DUYỆT XÁC MINH",
-            callback_data=f"xacminh_ok:{request_id}",
-        ),
-        InlineKeyboardButton(
-            "❌ TỪ CHỐI",
-            callback_data=f"xacminh_no:{request_id}",
-        ),
-    ]])
+    context.user_data["dang_xac_minh"] = request_id
 
+    await query.edit_message_text(
+        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
+
+💰 <b>Phí xác minh: {PHI_XAC_MINH:,}đ</b>
+
+🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>
+Ngân hàng: <b>{h(XAC_MINH_NGAN_HANG)}</b>
+Chủ TK: <b>{h(XAC_MINH_CHU_TK)}</b>
+Số TK: <code>{h(XAC_MINH_SO_TK)}</code>
+
+💵 Số tiền: <b>{PHI_XAC_MINH:,}đ</b>
+📝 Nội dung CK: <code>XACMINH {u['id']}</code>
+
+📸 Sau khi chuyển khoản, hãy <b>gửi ảnh biên lai</b> tại đây.
+⏳ Admin sẽ kiểm tra giao dịch và duyệt thủ công.
+
+⚠️ Khoản phí phải được thanh toán đúng số tiền và đúng thông tin trên. Chức năng rút chỉ được mở sau khi Admin xác nhận.""",
+        parse_mode="HTML",
+        reply_markup=menu_chinh(u["id"]),
+    )
+
+    # Thông báo cho admin rằng có yêu cầu xác minh mới.
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"""🛡 <b>YÊU CẦU XÁC MINH NGƯỜI THẬT</b>
 
 🆔 ID: <code>{u['id']}</code>
 👤 Tên: {h(u['ten'])}
-💰 Phí xác minh: {PHI_XAC_MINH:,}đ
-🏦 Tài khoản: {h(u['tai_khoan'] or 'Chưa liên kết')}
+💰 Phí: {PHI_XAC_MINH:,}đ
+📝 Nội dung CK: <code>XACMINH {u['id']}</code>
+📋 Mã: <code>{h(request_id)}</code>
 
-📋 Mã yêu cầu:
-<code>{h(request_id)}</code>
+⏳ Đang chờ người dùng gửi biên lai.""",
+        parse_mode="HTML",
+    )
 
-⏳ Đang chờ Admin xử lý.""",
+    return XAC_MINH_GUI_ANH
+
+
+async def nhan_anh_xac_minh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Nhận biên lai 30.000đ và gửi cho Admin kiểm tra."""
+    request_id = context.user_data.get("dang_xac_minh")
+    if not request_id:
+        return
+
+    u = get_user(update.effective_user.id)
+    if not u:
+        context.user_data.pop("dang_xac_minh", None)
+        return
+
+    photo = update.effective_message.photo[-1] if update.effective_message.photo else None
+    if not photo:
+        await update.message.reply_text(
+            "❌ Vui lòng gửi ảnh biên lai chuyển khoản.",
+            reply_markup=menu_chinh(u["id"]),
+        )
+        return
+
+    with db() as conn:
+        yc = conn.execute(
+            "SELECT * FROM verification_requests WHERE request_id=? AND status='pending'",
+            (request_id,),
+        ).fetchone()
+        if not yc:
+            context.user_data.pop("dang_xac_minh", None)
+            await update.message.reply_text(
+                "❌ Yêu cầu xác minh không tồn tại hoặc đã được xử lý.",
+                reply_markup=menu_chinh(u["id"]),
+            )
+            return
+        conn.execute(
+            "UPDATE verification_requests SET photo_file_id=? WHERE request_id=?",
+            (photo.file_id, request_id),
+        )
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ DUYỆT XÁC MINH", callback_data=f"xacminh_ok:{request_id}"),
+        InlineKeyboardButton("❌ TỪ CHỐI", callback_data=f"xacminh_no:{request_id}"),
+    ]])
+
+    caption = f"""🛡 <b>BIÊN LAI XÁC MINH NGƯỜI THẬT</b>
+
+🆔 ID: <code>{u['id']}</code>
+👤 Tên: {h(u['ten'])}
+💰 Phí: {PHI_XAC_MINH:,}đ
+📝 Nội dung cần đối chiếu: <code>XACMINH {u['id']}</code>
+📋 Mã: <code>{h(request_id)}</code>
+
+⚠️ Kiểm tra giao dịch thực tế trước khi duyệt."""
+
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo.file_id,
+        caption=caption,
         parse_mode="HTML",
         reply_markup=keyboard,
     )
 
-    await query.edit_message_text(
-        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
-
-💰 Phí xác minh: <b>{PHI_XAC_MINH:,}đ</b>
-
-📋 Mã yêu cầu:
-<code>{h(request_id)}</code>
-
-⏳ Yêu cầu đã được gửi tới Admin.
-✅ Sau khi Admin xác nhận, chức năng rút tiền sẽ được mở khóa.
-
-⚠️ Phí xác minh cần được thanh toán/xác nhận theo quy trình của hệ thống.""",
-        parse_mode="HTML",
+    context.user_data.pop("dang_xac_minh", None)
+    await update.message.reply_text(
+        "✅ Đã gửi biên lai cho Admin. Vui lòng chờ kiểm tra và duyệt.",
         reply_markup=menu_chinh(u["id"]),
     )
 
@@ -1268,7 +1336,13 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
             if data.startswith("xacminh_ok:"):
-                # Chỉ đánh dấu xác minh; không tự động trừ phí.
+                if not yc["photo_file_id"]:
+                    await query.answer(
+                        "❌ Chưa có biên lai. Yêu cầu người dùng gửi ảnh trước khi duyệt.",
+                        show_alert=True,
+                    )
+                    return
+
                 conn.execute(
                     """
                     UPDATE verification_requests
@@ -1292,7 +1366,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 ✅ Admin đã xác nhận yêu cầu của bạn.
 
-💰 Phí xác minh: {yc['phi']:,}đ
+💰 Phí xác minh đã xác nhận: {yc['phi']:,}đ
 🔓 Chức năng rút tiền đã được mở khóa.
 
 Bạn có thể nhấn <b>💰 Rút Tiền</b> để tiếp tục.""",
@@ -1654,7 +1728,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     text=f"""🛡 <b>XÁC MINH THÀNH CÔNG</b>
 
 ✅ Yêu cầu xác minh của bạn đã được Admin duyệt.
-💰 Phí xác minh: {yc['phi']:,}đ
+💰 Phí xác minh đã xác nhận: {yc['phi']:,}đ
 🔓 Chức năng rút tiền đã được mở khóa.""",
                     parse_mode="HTML",
                 )
@@ -2164,6 +2238,12 @@ def build_application():
     app.add_handler(nap_conv, group=1)
     app.add_handler(rut_conv, group=1)
     app.add_handler(admin_conv, group=1)
+
+    # Ảnh biên lai xác minh 30.000đ. Handler kiểm tra cờ trong user_data.
+    app.add_handler(
+        MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
+        group=1,
+    )
 
     app.add_handler(
         MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so)
