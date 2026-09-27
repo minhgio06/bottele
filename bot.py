@@ -879,7 +879,7 @@ async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
 def main():
     print("🔄 Đang khởi động BOT...")
     
-    token = os.getenv("BOT_TOKEN", "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA")
+    token = os.getenv("BOT_TOKEN", "ĐIỀN_TOKEN_BOT_CỦA_BẠN VÀO ĐÂY")
     if token == "ĐIỀN_TOKEN_BOT_CỦA_BẠN VÀO ĐÂY":
         print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
     
