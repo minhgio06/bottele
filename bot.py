@@ -112,7 +112,7 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Gửi link + nút bắt đầu
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Mở Link Xem Video", url=LINK_VIDEO_MAU)],
+        [InlineKeyboardButton("▶️ Mở Link Xem Video", url=https://t.me/cayxuonline_bot)],
         [InlineKeyboardButton("✅ Đã Xem Xong — Nhận Tiền", callback_data=f"nhan_tien:{u_id}")]
     ])
 
