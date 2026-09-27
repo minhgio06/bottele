@@ -304,7 +304,7 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
     u_id = update.effective_user.id
     u = users[u_id]
     
-    if data not in GOI_NANG_CAP: return
+    if data not in GOI_NANG_CAP: return ConversationHandler.END
     g = GOI_NANG_CAP[data]
     
     ma_nap = f"{g['ma_chung']} {u_id}"
@@ -341,12 +341,12 @@ async def da_chuyen_khoan_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     data = query.data
-    if not data.startswith("dachuyen:"): return
+    if not data.startswith("dachuyen:"): return ConversationHandler.END
     _, ma_nap = data.split(":", 1)
     
     if ma_nap not in nap_tien_cho_duyet:
         await query.answer("❌ Yêu cầu không tồn tại!", show_alert=True)
-        return
+        return ConversationHandler.END
     
     context.user_data["ma_nap_dang_xu_ly"] = ma_nap
     
@@ -914,5 +914,3 @@ async def huy_hanh_dong_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.clear()
     await update.message.reply_text(
         "❌ Đã hủy.",
-        reply_markup=menu_chinh(update.effective_user.id)
-   
