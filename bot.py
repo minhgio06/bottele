@@ -134,7 +134,6 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u["dang_xem"] = True
     hien_tai = u["video_ngay"]
 
-    # Gửi tin nhắn hướng dẫn + nút MỞ VIDEO
     keyboard_mo = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=LINK_VIDEO)]
     ])
@@ -151,10 +150,8 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=keyboard_mo
     )
 
-    # Đếm ngược 15 giây → thay nút thành NHẬN THƯỞNG
     await asyncio.sleep(15)
 
-    # Kiểm tra xem còn trong phiên không
     if not u["dang_xem"]:
         return
 
@@ -189,17 +186,14 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     gioi_han = CAP_BAC_CONFIG[u["cap_bac"]]["gioi_han_xem_ngay"]
 
-    # Cộng tiền
     u["video_da_xem"] += 1
     u["video_ngay"] += 1
     u["so_du"] += tien_nhan
     u["dang_xem"] = False
 
-    # Hoa hồng cấp 1
     if u["ref_by"] and u["ref_by"] in users:
         users[u["ref_by"]]["so_du"] += int(tien_nhan * HOA_HONG["f1"])
 
-    # Thông báo thành công giống hệt ảnh
     await query.edit_message_text(
         f"""✅ <b>NHẬN THƯỞNG THÀNH CÔNG</b>
 
@@ -261,12 +255,12 @@ async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML", reply_markup=keyboard
     )
 
+# ========== ✅ NÂNG CẤP — ĐÃ THÊM THÔNG TIN ACB ==========
 async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     u_id = update.effective_user.id
-    u = users[u_id]
 
     thong_tin = {
         "goi_bac": ("Gói Bạc", "125.000đ", "Leader Bạc"),
@@ -284,9 +278,11 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
 🏆 Nâng cấp lên: {cap_moi}
 
 📌 Vui lòng chuyển khoản đến tài khoản:
-🔔 Nội dung: NAP {u_id}
+🏦 Ngân hàng: <b>ACB</b>
+🔢 Số tài khoản: <b>25607451</b>
+🔔 Nội dung chuyển khoản: <code>NAP {u_id}</code>
 
-Sau khi chuyển, chờ admin duyệt!""",
+✅ Sau khi chuyển khoản, vui lòng chờ admin duyệt!""",
         parse_mode="HTML"
     )
 
