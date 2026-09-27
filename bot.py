@@ -786,64 +786,87 @@ async def xu_ly_nut(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Chọn chức năng bên dưới!", reply_markup=menu_chinh(u_id))
 
+# === KHAI BÁO HANDLER & CHẠY BOT ===
 def main():
     print("=" * 50)
     print("🤖 TIKTOP VIEW — ĐANG KHỞI ĐỘNG...")
     print("=" * 50)
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    token = BOT_TOKEN
+    if not token:
+        print("⚠️  Vui lòng đặt BOT_TOKEN trong biến môi trường!")
+        return
+    
+    application = ApplicationBuilder().token(token).build()
 
-    # Các ConversationHandler
-    rut_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau)],
+    # === Handler hội thoại Rút tiền ===
+    rut_tien_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex("^💰 Rút Tiền$"), rut_tien_bat_dau),
+            CallbackQueryHandler(lien_ket_tai_khoan_bat_dau, pattern="^lien_ket_tai_khoan$")
+        ],
         states={
-            NH_TEN_NGANHANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_nganhang)],
-            NH_SO_TAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_taikhoan)],
-            NH_TEN_CHUTAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_chu)],
-            NH_SO_TIEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_tien)],
+            NHAP_TAI_KHOAN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, nhap_thong_tin_tai_khoan)
+            ]
         },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), rut_tien_huy)]
+        fallbacks=[MessageHandler(filters.Regex("^❌ Hủy$"), rut_tien_huy)],
     )
 
-    nap_handler = ConversationHandler(
+    # === Handler hội thoại Nạp tiền/Nâng cấp ===
+    nap_tien_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(da_chuyen_khoan_callback, pattern="^dachuyen:")],
-        states={
-            NAP_GUI_ANH: [MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, nhan_anh_chuyen_khoan)],
-        },
-        fallbacks=[]
+        states={NAP_GUI_ANH: [MessageHandler(filters.ALL & ~filters.COMMAND, nhan_anh_chuyen_khoan)]},
+        fallbacks=[],
     )
 
-    admin_congtru_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tien$|^admin_tru_tien$")],
-        states={
-            ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
-            ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), huy_hanh_dong_admin)]
+    # === Handler hội thoại Admin ===
+    admin_cong_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(lambda u,c: ADMIN_CONG_SO_DU, pattern="^admin_cong_tien$")],
+        states={ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^.*$"), huy_hanh_dong_admin)],
     )
-
+    admin_cong_tat_ca_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(lambda u,c: ADMIN_CONG_TAT_CA, pattern="^admin_cong_tat_ca$")],
+        states={ADMIN_CONG_TAT_CA: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^.*$"), huy_hanh_dong_admin)],
+    )
+    admin_tru_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(lambda u,c: ADMIN_TRU_SO_DU, pattern="^admin_tru_tien$")],
+        states={ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)]},
+        fallbacks=[MessageHandler(filters.Regex("^.*$"), huy_hanh_dong_admin)],
+    )
     admin_gui_tb_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_gui_tb$")],
-        states={
-            ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), huy_hanh_dong_admin)]
+        entry_points=[CallbackQueryHandler(lambda u,c: ADMIN_GUI_TB, pattern="^admin_gui_tb$")],
+        states={ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)]},
+        fallbacks=[MessageHandler(filters.Regex("^.*$"), huy_hanh_dong_admin)],
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(rut_handler)
-    app.add_handler(nap_handler)
-    app.add_handler(admin_congtru_handler)
-    app.add_handler(admin_gui_tb_handler)
-    app.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern="^goi_"))
-    app.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern="^nhan_thuong:"))
-    app.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^duyet_|^admin_"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_nut))
+    # === Đăng ký tất cả handler ===
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(rut_tien_handler)
+    application.add_handler(nap_tien_handler)
+    application.add_handler(admin_cong_handler)
+    application.add_handler(admin_cong_tat_ca_handler)
+    application.add_handler(admin_tru_handler)
+    application.add_handler(admin_gui_tb_handler)
+    
+    application.add_handler(MessageHandler(filters.Regex("^👤 Hồ Sơ$"), ho_so))
+    application.add_handler(MessageHandler(filters.Regex("^🔍 Xem TikTok$"), xem_tiktok))
+    application.add_handler(MessageHandler(filters.Regex("^👥 Khu Vực Leader$"), khu_vuc_leader))
+    application.add_handler(MessageHandler(filters.Regex("^👑 Nâng Cấp Bậc$"), nang_cap))
+    application.add_handler(MessageHandler(filters.Regex("^🎧 Hỗ Trợ$"), ho_tro))
+    application.add_handler(MessageHandler(filters.Regex("^🔐 Nhập CaptCha$"), captcha))
+    application.add_handler(MessageHandler(filters.Regex("^🎛 QUẢN LÝ ADMIN$"), trang_quan_ly_admin))
+    
+    application.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern="^nhan_thuong:"))
+    application.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern="^goi_"))
+    application.add_handler(CallbackQueryHandler(xu_ly_admin_callback))
 
-    # === DÒNG 841 ĐÃ SỬA ===
-    print("✅ BOT KHỞI ĐỘNG THÀNH CÔNG!")
-    print("🌐 Bot đang chạy...")
-    app.run_polling()
-
+    print("✅ Bot đã sẵn sàng nhận lệnh!")
+    print("-" * 50)
+    
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
