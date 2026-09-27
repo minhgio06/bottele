@@ -798,4 +798,44 @@ def main():
             NH_TEN_NGANHANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_nganhang)],
             NH_SO_TAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_taikhoan)],
             NH_TEN_CHUTAIKHOAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_ten_chu)],
-            NH_SO_TIEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_t
+            NH_SO_TIEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, rut_tien_so_tien)],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), rut_tien_huy)]
+    )
+
+    nap_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(da_chuyen_khoan_callback, pattern="^dachuyen:")],
+        states={
+            NAP_GUI_ANH: [MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, nhan_anh_chuyen_khoan)],
+        },
+        fallbacks=[]
+    )
+
+    admin_congtru_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_cong_tien$|^admin_tru_tien$")],
+        states={
+            ADMIN_CONG_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
+            ADMIN_TRU_SO_DU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_cong_tru)],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), huy_hanh_dong_admin)]
+    )
+
+    admin_gui_tb_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(xu_ly_admin_callback, pattern="^admin_gui_tb$")],
+        states={
+            ADMIN_GUI_TB: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_gui_tb)],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Hủy$"), huy_hanh_dong_admin)]
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(rut_handler)
+    app.add_handler(nap_handler)
+    app.add_handler(admin_congtru_handler)
+    app.add_handler(admin_gui_tb_handler)
+    app.add_handler(CallbackQueryHandler(xu_ly_goi_nang_cap, pattern="^goi_"))
+    app.add_handler(CallbackQueryHandler(nhan_thuong_callback, pattern="^nhan_thuong:"))
+    app.add_handler(CallbackQueryHandler(xu_ly_admin_callback, pattern="^duyet_|^admin_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, xu_ly_nut))
+
+    print("✅ B
