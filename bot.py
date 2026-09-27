@@ -10,7 +10,7 @@ from telegram.ext import (
 # ========================================
 # ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY
 # ========================================
-BOT_TOKEN = "TOKEN_CUA_BAN"  # Thay Token của bạn
+BOT_TOKEN = "8605823154:AAFOTHtkZKE01PcaDmYDbafexIwN5sj2oLA"  # Thay Token của bạn
 ADMIN_ID = 6163458267
 KENH_YEU_CAU = None  # Hoặc "@TenKenh" nếu muốn bắt tham gia kênh
 
