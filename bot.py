@@ -1636,6 +1636,61 @@ async def nhan_anh_xac_minh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+
+
+async def gui_yeu_cau_rut_kenh(*args, **kwargs):
+    # Không đăng yêu cầu rút đang chờ duyệt lên kênh công khai.
+    return None
+
+async def cap_nhat_thong_bao_rut_kenh(context, message_id, request_id, trang_thai, so_tien=None, tai_khoan=None, ten=None):
+    """Cập nhật bài đăng trong kênh sau khi duyệt/từ chối."""
+    if not message_id:
+        return
+    if trang_thai == "approved":
+        text = (
+            "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
+            f"📋 Mã: <code>{h(request_id)}</code>\n"
+            f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
+            f"🔗 Tài khoản: {h(tai_khoan)}\n"
+            f"👤 Người nhận: <b>{h(ten)}</b>\n\n"
+            "✅ <b>Đã duyệt.</b>"
+        )
+    else:
+        text = (
+            "❌ <b>YÊU CẦU RÚT TIỀN BỊ TỪ CHỐI</b>\n\n"
+            f"📋 Mã: <code>{h(request_id)}</code>\n\n"
+            "❌ <b>Đã từ chối.</b>"
+        )
+    try:
+        await context.bot.edit_message_text(
+            chat_id=KENH_THONG_BAO,
+            message_id=message_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=None,
+        )
+    except Exception as exc:
+        LOGGER.warning("Không cập nhật được thông báo %s trong kênh: %r", request_id, exc)
+
+
+async def gui_thong_bao_rut_thanh_cong(context, ma_rut, so_tien, tai_khoan, ten_nguoi_nhan):
+    """Gửi thông báo rút tiền thành công vào kênh @rutxutiktok."""
+    if not KENH_THONG_BAO_RUT:
+        return
+    text = (
+        "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
+        f"📋 Mã: <code>{h(ma_rut)}</code>\n"
+        f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
+        f"🔗 Tài khoản: {h(tai_khoan)}\n"
+        f"👤 Người nhận: <b>{h(ten_nguoi_nhan)}</b>\n\n"
+        "✅ <b>Đã duyệt.</b>"
+    )
+    try:
+        await context.bot.send_message(chat_id=KENH_THONG_BAO_RUT, text=text, parse_mode="HTML")
+    except Exception as exc:
+        LOGGER.exception("Không gửi được thông báo rút thành công vào kênh: %r", exc)
+
+
 # RÚT TIỀN + LIÊN KẾT TÀI KHOẢN
 # ============================================================
 async def rut_tien_bat_dau(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1851,22 +1906,19 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         reply_markup=keyboard,
     )
 
-    # Đồng thời thông báo vào kênh công khai. Bot phải là admin kênh.
-    try:
-        await context.bot.send_message(
-            chat_id=KENH_THONG_BAO,
-            text=f"""📢 <b>YÊU CẦU RÚT TIỀN MỚI</b>
+    # Đăng yêu cầu rút đang chờ duyệt vào kênh RÚT XU TIKTOK.
+    # Lưu message_id để sau khi duyệt/từ chối có thể cập nhật chính bài đăng này.
+    channel_message_id = await gui_yeu_cau_rut_kenh(
+        context,
+        request_id,
+        u["id"],
+        u["ten"],
+        so_tien,
+        u["tai_khoan"],
+        now_vn().strftime("%d/%m/%Y %H:%M"),
+    )
 
-🆔 ID: <code>{u['id']}</code>
-👤 Tên: {h(u['ten'])}
-💵 Số tiền: <b>{so_tien:,}đ</b>
-📋 Mã: <code>{h(request_id)}</code>
-📅 {now_vn().strftime('%d/%m/%Y %H:%M')}""",
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-    except Exception as exc:
-        LOGGER.warning("Không gửi được thông báo kênh %s: %r", KENH_THONG_BAO, exc)
+    context.application.bot_data.setdefault("rut_channel_messages", {})[request_id] = channel_message_id
 
     await update.message.reply_text(
         f"""✅ <b>ĐÃ GỬI YÊU CẦU RÚT TIỀN</b>
@@ -2298,6 +2350,12 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                 except Exception as exc:
                     print("SEND REJECT NOTICE ERROR:", repr(exc))
 
+                channel_messages = context.application.bot_data.get("rut_channel_messages", {})
+                channel_message_id = channel_messages.pop(request_id, None)
+                await cap_nhat_thong_bao_rut_kenh(
+                    context, channel_message_id, request_id, "rejected",
+                )
+
                 await query.edit_message_text(
                     f"❌ Đã từ chối {h(request_id)}."
                 )
@@ -2351,6 +2409,18 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
             )
         except Exception as exc:
             print("SEND APPROVE NOTICE ERROR:", repr(exc))
+
+        channel_messages = context.application.bot_data.get("rut_channel_messages", {})
+        channel_message_id = channel_messages.pop(request_id, None)
+        await cap_nhat_thong_bao_rut_kenh(
+            context,
+            channel_message_id,
+            request_id,
+            "approved",
+            yc["so_tien"],
+            yc["tai_khoan"],
+            yc["ten"],
+        )
 
         await query.edit_message_text(
             f"✅ Đã duyệt {h(request_id)} — Trừ {yc['so_tien']:,}đ."
@@ -2537,6 +2607,15 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                 )
             except Exception:
                 pass
+
+            # Gửi thông báo duyệt từng đơn vào kênh RÚT XU TIKTOK.
+            await gui_thong_bao_rut_thanh_cong(
+                context,
+                yc["request_id"],
+                yc["so_tien"],
+                yc["tai_khoan"],
+                yc["ten"],
+            )
 
         msg = (
             "✅ <b>ĐÃ DUYỆT TẤT CẢ ĐƠN CÓ THỂ XỬ LÝ</b>\n\n"
@@ -3305,37 +3384,3 @@ if __name__ == "__main__":
         print("Bot đã dừng.")
     except Exception as exc:
         print("BOT START ERROR:", repr(exc))
-
-async def gui_thong_bao_rut_thanh_cong(
-    context,
-    ma_rut,
-    so_tien,
-    tai_khoan,
-    ten_nguoi_nhan,
-):
-    """Gửi thông báo giao dịch rút thành công vào kênh @rutxutiktok."""
-    if not KENH_THONG_BAO_RUT:
-        return
-
-    text = (
-        "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
-        f"📋 Mã: <code>{ma_rut}</code>\n"
-        f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
-        f"🔗 Tài khoản: {tai_khoan}\n"
-        f"👤 Người nhận: <b>{ten_nguoi_nhan}</b>\n\n"
-        "✅ <b>Đã duyệt.</b>"
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=KENH_THONG_BAO_RUT,
-            text=text,
-            parse_mode="HTML",
-        )
-        LOGGER.info(
-            "Đã gửi thông báo rút %s vào %s",
-            ma_rut,
-            KENH_THONG_BAO_RUT,
-        )
-    except Exception as exc:
-        LOGGER.exception("Không gửi được thông báo rút vào kênh: %r", exc)
