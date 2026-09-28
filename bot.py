@@ -41,7 +41,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHbLA-pCXYuBQx4oGr8F3aimfYBWgOcxp4").strip() 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
