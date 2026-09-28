@@ -1480,6 +1480,12 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                 return
 
             if data.startswith("duyet_nap_ok:"):
+                if not yc["photo_file_id"]:
+                    await query.answer(
+                        "❌ Chưa có biên lai. Không thể duyệt đơn nạp.",
+                        show_alert=True,
+                    )
+                    return
                 conn.execute(
                     """
                     UPDATE deposits
@@ -1668,7 +1674,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     (yc["user_id"],),
                 ).fetchone()
 
-                if not user:
+                if not user or not yc["photo_file_id"]:
                     continue
 
                 changed = conn.execute(
@@ -1705,7 +1711,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     (yc["user_id"],),
                 ).fetchone()
 
-                if not user:
+                if not user or not yc["photo_file_id"]:
                     skipped_deposits.append(yc["request_id"])
                     continue
 
@@ -1828,7 +1834,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
             f"📥 Nạp/nâng cấp: <b>{len(approved_deposits)}</b> đơn\n"
             f"💸 Rút tiền: <b>{len(approved_withdrawals)}</b> đơn\n"
             f"⚠️ Rút bỏ qua do số dư không đủ: <b>{len(skipped_withdrawals)}</b> đơn\n"
-            f"⚠️ Nạp bỏ qua do người dùng không tồn tại: <b>{len(skipped_deposits)}</b> đơn"
+            f"⚠️ Nạp bỏ qua do thiếu biên lai/người dùng: <b>{len(skipped_deposits)}</b> đơn"
         )
 
         if skipped_withdrawals:
@@ -2252,7 +2258,7 @@ def build_application():
                 r"^(admin_ds_(rut|nap|xacminh|nguoi)|admin_duyet_tat_ca)$"
             ),
         ),
-        group=0,
+        group=1,
     )
 
     app.add_handler(
@@ -2292,7 +2298,7 @@ def build_application():
 
     app.add_handler(nap_conv, group=1)
     app.add_handler(rut_conv, group=1)
-    app.add_handler(admin_conv, group=1)
+    app.add_handler(admin_conv, group=0)
 
     # Ảnh biên lai xác minh 30.000đ. Handler kiểm tra cờ trong user_data.
     app.add_handler(
