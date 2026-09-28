@@ -6,6 +6,8 @@ import sqlite3
 import logging
 import signal
 import uuid
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -30,7 +32,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAEgm836u0wMaIQEIa-s1wW6f6DMcT1TJUU") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -44,6 +46,39 @@ DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 # Render/polling: chỉ chạy 1 instance/worker với BOT_TOKEN này.
 # Không chạy đồng thời bot.py ở máy cá nhân/VPS/Render service khác.
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+# ============================================================
+# RENDER HEALTH SERVER
+# ============================================================
+# Render Web Service requires at least one listening TCP port.
+# Telegram uses long polling, so this tiny HTTP server is only
+# used for Render port detection and health checks.
+RENDER_PORT = int(os.getenv("PORT", "10000"))
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"OK"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+    server = ThreadingHTTPServer(("0.0.0.0", RENDER_PORT), _HealthHandler)
+    LOGGER.info("Render health server listening on 0.0.0.0:%s", RENDER_PORT)
+    server.serve_forever()
+
 
 # Logging production-friendly: Render sẽ giữ log để truy lỗi.
 logging.basicConfig(
@@ -1450,6 +1485,26 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
 
 
 # ============================================================
+
+# ============================================================
+# SECURITY / BUSINESS-RULE HELPERS
+# ============================================================
+def user_is_verified(user_id: int) -> bool:
+    """Return whether the user has completed the human verification."""
+    try:
+        row = conn.execute(
+            "SELECT verified FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return False
+        value = row[0]
+        return value in (1, True, "1", "true", "True", "verified")
+    except Exception:
+        LOGGER.exception("Không thể kiểm tra trạng thái xác minh user_id=%s", user_id)
+        return False
+
+
 # ADMIN
 # ============================================================
 async def _admin_dashboard_content():
@@ -2042,7 +2097,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data == "admin_ds_rut":
         with db() as conn:
             rows = conn.execute(
-                "SELECT * FROM withdrawals WHERE status='pending' ORDER BY thoi_gian DESC"
+                "SELECT w.* FROM withdrawals w JOIN users u ON u.user_id = w.user_id WHERE w.status='pending' AND u.verified=1 ORDER BY thoi_gian DESC"
             ).fetchall()
 
         if not rows:
@@ -2580,18 +2635,26 @@ async def run_bot():
         webhook_info = await application.bot.get_webhook_info()
         if webhook_info.url:
             print(f"Phát hiện webhook cũ: {webhook_info.url} -> đang xoá...")
-        await application.bot.delete_webhook(drop_pending_updates=True)
+        await application.bot.delete_webhook(drop_pending_updates=False)
     except Exception as exc:
         print("Không thể xoá webhook cũ:", repr(exc))
         raise
 
     await application.start()
 
+    # Render Web Service cần một TCP port đang listen.
+    # Telegram vẫn dùng long polling như trước.
+    threading.Thread(
+        target=start_health_server,
+        name="render-health-server",
+        daemon=True,
+    ).start()
+
     try:
         print("Đang khởi động Telegram polling...")
         await application.updater.start_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
             poll_interval=1.0,
         )
         print("Bot đang chạy và chờ update.")
