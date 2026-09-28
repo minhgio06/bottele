@@ -1906,20 +1906,6 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         reply_markup=keyboard,
     )
 
-    # Đăng yêu cầu rút đang chờ duyệt vào kênh RÚT XU TIKTOK.
-    # Lưu message_id để sau khi duyệt/từ chối có thể cập nhật chính bài đăng này.
-    channel_message_id = await gui_yeu_cau_rut_kenh(
-        context,
-        request_id,
-        u["id"],
-        u["ten"],
-        so_tien,
-        u["tai_khoan"],
-        now_vn().strftime("%d/%m/%Y %H:%M"),
-    )
-
-    context.application.bot_data.setdefault("rut_channel_messages", {})[request_id] = channel_message_id
-
     await update.message.reply_text(
         f"""✅ <b>ĐÃ GỬI YÊU CẦU RÚT TIỀN</b>
 
@@ -2350,12 +2336,6 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                 except Exception as exc:
                     print("SEND REJECT NOTICE ERROR:", repr(exc))
 
-                channel_messages = context.application.bot_data.get("rut_channel_messages", {})
-                channel_message_id = channel_messages.pop(request_id, None)
-                await cap_nhat_thong_bao_rut_kenh(
-                    context, channel_message_id, request_id, "rejected",
-                )
-
                 await query.edit_message_text(
                     f"❌ Đã từ chối {h(request_id)}."
                 )
@@ -2410,13 +2390,10 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         except Exception as exc:
             print("SEND APPROVE NOTICE ERROR:", repr(exc))
 
-        channel_messages = context.application.bot_data.get("rut_channel_messages", {})
-        channel_message_id = channel_messages.pop(request_id, None)
-        await cap_nhat_thong_bao_rut_kenh(
+        # Chỉ khi Admin DUYỆT thành công mới đăng thông báo vào kênh @rutxutiktok.
+        await gui_thong_bao_rut_thanh_cong(
             context,
-            channel_message_id,
             request_id,
-            "approved",
             yc["so_tien"],
             yc["tai_khoan"],
             yc["ten"],
