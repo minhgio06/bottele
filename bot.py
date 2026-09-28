@@ -30,7 +30,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAG4y0Xl5FxQ1mGkYfkEr67oJCmokJY33P0") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAF1zW3XMH6sVjeALgBGMTPDrj6PsJ7jHE4") 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -1314,49 +1314,55 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
 # ============================================================
 # ADMIN
 # ============================================================
-async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Không có quyền.")
-        return
-
+async def _admin_dashboard_content():
     with db() as conn:
         tong_nguoi = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        tong_cho_rut = conn.execute(
-            "SELECT COUNT(*) FROM withdrawals WHERE status='pending'"
-        ).fetchone()[0]
-        tong_cho_nap = conn.execute(
-            "SELECT COUNT(*) FROM deposits WHERE status='pending'"
-        ).fetchone()[0]
-        tong_cho_xac_minh = conn.execute(
-            "SELECT COUNT(*) FROM verification_requests WHERE status='pending'"
-        ).fetchone()[0]
-        tong_so_du = conn.execute(
-            "SELECT COALESCE(SUM(so_du),0) FROM users"
-        ).fetchone()[0]
+        tong_cho_rut = conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
+        tong_cho_nap = conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
+        tong_cho_xac_minh = conn.execute("SELECT COUNT(*) FROM verification_requests WHERE status='pending'").fetchone()[0]
+        tong_so_du = conn.execute("SELECT COALESCE(SUM(so_du),0) FROM users").fetchone()[0]
 
-    await update.message.reply_text(
-        f"""🎛 <b>TRANG QUẢN LÝ ADMIN</b>
-
-👥 Tổng người dùng: <b>{tong_nguoi}</b>
-⏳ Chờ rút tiền: <b>{tong_cho_rut}</b>
-⏳ Chờ nạp/nâng cấp: <b>{tong_cho_nap}</b>
-🛡 Chờ xác minh: <b>{tong_cho_xac_minh}</b>
-💰 Tổng số dư hệ thống: <b>{tong_so_du:,}đ</b>
-
-👇 Chọn chức năng:""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💰 Cộng tiền 1 người", callback_data="admin_cong_tien")],
-            [InlineKeyboardButton("💰 Cộng tiền TẤT CẢ", callback_data="admin_cong_tat_ca")],
-            [InlineKeyboardButton("💸 Trừ tiền người dùng", callback_data="admin_tru_tien")],
-            [InlineKeyboardButton("📢 Gửi thông báo", callback_data="admin_gui_tb")],
-            [InlineKeyboardButton("📋 Danh sách chờ rút", callback_data="admin_ds_rut")],
-            [InlineKeyboardButton("📋 Danh sách chờ nạp", callback_data="admin_ds_nap")],
-            [InlineKeyboardButton("🛡 Danh sách xác minh", callback_data="admin_ds_xacminh")],
-            [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
-            [InlineKeyboardButton("👥 Xem người dùng", callback_data="admin_ds_nguoi")],
-        ]),
+    text = (
+        "🎛 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 Người dùng: <b>{tong_nguoi:,}</b>\n"
+        f"💰 Tổng số dư: <b>{tong_so_du:,}đ</b>\n\n"
+        "📌 <b>ĐƠN ĐANG CHỜ</b>\n"
+        f"💸 Rút tiền: <b>{tong_cho_rut}</b>\n"
+        f"📥 Nạp / nâng cấp: <b>{tong_cho_nap}</b>\n"
+        f"🛡 Xác minh: <b>{tong_cho_xac_minh}</b>\n\n"
+        "⚡ Chọn chức năng bên dưới để quản lý."
     )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💸 Rút tiền", callback_data="admin_ds_rut"),
+            InlineKeyboardButton("📥 Nạp / cấp", callback_data="admin_ds_nap"),
+        ],
+        [
+            InlineKeyboardButton("🛡 Xác minh", callback_data="admin_ds_xacminh"),
+            InlineKeyboardButton("👥 Người dùng", callback_data="admin_ds_nguoi"),
+        ],
+        [
+            InlineKeyboardButton("💰 Cộng tiền", callback_data="admin_cong_tien"),
+            InlineKeyboardButton("💸 Trừ tiền", callback_data="admin_tru_tien"),
+        ],
+        [
+            InlineKeyboardButton("💰 Cộng TẤT CẢ", callback_data="admin_cong_tat_ca"),
+            InlineKeyboardButton("📢 Thông báo", callback_data="admin_gui_tb"),
+        ],
+        [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
+        [InlineKeyboardButton("🔄 Làm mới", callback_data="admin_refresh")],
+    ])
+    return text, keyboard
+
+
+async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Bạn không có quyền truy cập khu vực Admin.")
+        return
+
+    text, keyboard = await _admin_dashboard_content()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1457,6 +1463,17 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
         return
 
     await query.answer()
+
+    # --------------------------------------------------------
+    # DASHBOARD ADMIN
+    # --------------------------------------------------------
+    if data in ("admin_home", "admin_refresh"):
+        text, keyboard = await _admin_dashboard_content()
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        except Exception:
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+        return
 
     # --------------------------------------------------------
     # NẠP/NÂNG CẤP
@@ -1887,93 +1904,137 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data == "admin_ds_rut":
         with db() as conn:
             rows = conn.execute(
-                """
-                SELECT * FROM withdrawals
-                WHERE status='pending'
-                ORDER BY thoi_gian DESC
-                """
+                "SELECT * FROM withdrawals WHERE status='pending' ORDER BY thoi_gian DESC"
             ).fetchall()
 
         if not rows:
-            await query.message.reply_text("✅ Không có yêu cầu chờ rút.")
+            await query.message.reply_text(
+                "✅ <b>KHÔNG CÓ ĐƠN RÚT ĐANG CHỜ</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="admin_home")]])
+            )
             return
 
-        text = "📋 <b>DANH SÁCH CHỜ RÚT</b>\n\n"
-        for yc in rows:
-            text += (
-                f"<code>{h(yc['request_id'])}</code>\n"
-                f"👤 {h(yc['ten'])} | 💵 {yc['so_tien']:,}đ\n"
-                f"🔗 {h(yc['tai_khoan'])}\n\n"
+        await query.message.reply_text(
+            f"💸 <b>ĐƠN RÚT ĐANG CHỜ: {len(rows)}</b>\n\n"
+            "Chọn từng đơn để duyệt hoặc từ chối.",
+            parse_mode="HTML",
+        )
+        for yc in rows[:50]:
+            text = (
+                f"💸 <b>{yc['so_tien']:,}đ</b>\n"
+                f"👤 {h(yc['ten'])}\n"
+                f"🆔 <code>{yc['user_id']}</code>\n"
+                f"🏦 {h(yc['tai_khoan'])}\n"
+                f"📋 <code>{h(yc['request_id'])}</code>\n"
+                f"🕒 {h(yc['thoi_gian'])}"
             )
-        await query.message.reply_text(text, parse_mode="HTML")
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Duyệt", callback_data=f"duyet_ok:{yc['request_id']}"),
+                InlineKeyboardButton("❌ Từ chối", callback_data=f"duyet_no:{yc['request_id']}"),
+            ]])
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        if len(rows) > 50:
+            await query.message.reply_text(f"⚠️ Chỉ hiển thị 50/{len(rows)} đơn để tránh quá dài.")
+        await query.message.reply_text("⬅️", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Quay lại Admin", callback_data="admin_home")]]))
         return
 
     if data == "admin_ds_nap":
         with db() as conn:
             rows = conn.execute(
-                """
-                SELECT * FROM deposits
-                WHERE status='pending'
-                ORDER BY thoi_gian DESC
-                """
+                "SELECT * FROM deposits WHERE status='pending' ORDER BY thoi_gian DESC"
             ).fetchall()
 
         if not rows:
-            await query.message.reply_text("✅ Không có yêu cầu chờ nạp.")
+            await query.message.reply_text(
+                "✅ <b>KHÔNG CÓ ĐƠN NẠP / NÂNG CẤP</b>", parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="admin_home")]])
+            )
             return
 
-        text = "📋 <b>DANH SÁCH CHỜ NẠP/NÂNG CẤP</b>\n\n"
-        for yc in rows:
-            text += (
-                f"<code>{h(yc['request_id'])}</code>\n"
-                f"👤 {h(yc['ten'])} | {yc['gia']:,}đ → {h(yc['cap_moi'])}\n\n"
+        await query.message.reply_text(
+            f"📥 <b>ĐƠN NẠP / NÂNG CẤP: {len(rows)}</b>\n\nChọn từng đơn để xử lý.",
+            parse_mode="HTML",
+        )
+        for yc in rows[:50]:
+            text = (
+                f"📥 <b>{yc['gia']:,}đ</b> → <b>{h(yc['cap_moi'])}</b>\n"
+                f"👤 {h(yc['ten'])} | 🆔 <code>{yc['user_id']}</code>\n"
+                f"📋 <code>{h(yc['request_id'])}</code>\n"
+                f"🕒 {h(yc['thoi_gian'])}\n"
+                f"🧾 Biên lai: {'✅ Có' if yc['photo_file_id'] else '❌ Chưa có'}"
             )
-        await query.message.reply_text(text, parse_mode="HTML")
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Duyệt", callback_data=f"duyet_nap_ok:{yc['request_id']}"),
+                InlineKeyboardButton("❌ Từ chối", callback_data=f"duyet_nap_no:{yc['request_id']}"),
+            ]])
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        if len(rows) > 50:
+            await query.message.reply_text(f"⚠️ Chỉ hiển thị 50/{len(rows)} đơn.")
+        await query.message.reply_text("⬅️", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Quay lại Admin", callback_data="admin_home")]]))
         return
 
     if data == "admin_ds_xacminh":
         with db() as conn:
             rows = conn.execute(
-                """
-                SELECT * FROM verification_requests
-                WHERE status='pending'
-                ORDER BY thoi_gian DESC
-                """
+                "SELECT * FROM verification_requests WHERE status='pending' ORDER BY thoi_gian DESC"
             ).fetchall()
 
         if not rows:
             await query.message.reply_text(
-                "✅ Không có yêu cầu xác minh đang chờ."
+                "✅ <b>KHÔNG CÓ ĐƠN XÁC MINH</b>", parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="admin_home")]])
             )
             return
 
-        text = "🛡 <b>DANH SÁCH CHỜ XÁC MINH</b>\n\n"
-        for yc in rows:
-            text += (
+        await query.message.reply_text(
+            f"🛡 <b>ĐƠN XÁC MINH: {len(rows)}</b>\n\nChọn từng đơn để xử lý.", parse_mode="HTML"
+        )
+        for yc in rows[:50]:
+            text = (
+                f"🛡 <b>XÁC MINH NGƯỜI THẬT</b>\n"
+                f"👤 {h(yc['ten'])} | 🆔 <code>{yc['user_id']}</code>\n"
+                f"💰 Phí: <b>{yc['phi']:,}đ</b>\n"
                 f"📋 <code>{h(yc['request_id'])}</code>\n"
-                f"🆔 ID: <code>{yc['user_id']}</code>\n"
-                f"👤 {h(yc['ten'])}\n"
-                f"💰 Phí: {yc['phi']:,}đ\n"
-                f"📅 {h(yc['thoi_gian'])}\n\n"
+                f"🕒 {h(yc['thoi_gian'])}\n"
+                f"🧾 Biên lai: {'✅ Có' if yc['photo_file_id'] else '❌ Chưa có'}"
             )
-
-        await query.message.reply_text(text, parse_mode="HTML")
+            buttons = []
+            if yc['photo_file_id']:
+                buttons.append([
+                    InlineKeyboardButton("✅ Duyệt", callback_data=f"xacminh_ok:{yc['request_id']}"),
+                    InlineKeyboardButton("❌ Từ chối", callback_data=f"xacminh_no:{yc['request_id']}"),
+                ])
+            kb = InlineKeyboardMarkup(buttons) if buttons else None
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        if len(rows) > 50:
+            await query.message.reply_text(f"⚠️ Chỉ hiển thị 50/{len(rows)} đơn.")
+        await query.message.reply_text("⬅️", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Quay lại Admin", callback_data="admin_home")]]))
         return
 
     if data == "admin_ds_nguoi":
         rows = all_users()
         if not rows:
-            await query.message.reply_text("Chưa có người dùng.")
+            await query.message.reply_text(
+                "👥 <b>CHƯA CÓ NGƯỜI DÙNG</b>", parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="admin_home")]])
+            )
             return
 
-        text = "👥 <b>DANH SÁCH NGƯỜI DÙNG</b>\n\n"
-        for u in rows[:100]:
-            xac = "✅" if u.get("xac_minh_nguoi_that", 0) else "🔒"
+        text = f"👥 <b>NGƯỜI DÙNG ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        for u in rows[:50]:
+            xac = "✅ Đã XM" if u.get("xac_minh_nguoi_that", 0) else "🔒 Chưa XM"
             text += (
-                f"🆔 {u['id']} | {h(u['ten'])}\n"
-                f"💰 {u['so_du']:,}đ | {h(u['cap_bac'])} | {xac}\n\n"
+                f"🆔 <code>{u['id']}</code> — {h(u['ten'])}\n"
+                f"💰 {u['so_du']:,}đ | 🏆 {h(u['cap_bac'])} | {xac}\n\n"
             )
-        await query.message.reply_text(text, parse_mode="HTML")
+        if len(rows) > 50:
+            text += f"⚠️ Hiển thị 50/{len(rows)} người dùng.\n"
+        await query.message.reply_text(
+            text, parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại Admin", callback_data="admin_home")]])
+        )
+        return
 
 
 async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2276,7 +2337,7 @@ def build_application():
             pattern=(
                 r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no|"
                 r"xacminh_ok|xacminh_no):.+$|"
-                r"^(admin_ds_(rut|nap|xacminh|nguoi)|admin_duyet_tat_ca)$"
+                r"^(admin_(home|refresh|ds_(rut|nap|xacminh|nguoi)|duyet_tat_ca))$"
             ),
         ),
         group=1,
