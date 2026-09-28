@@ -3,6 +3,11 @@ import html
 import os
 import time
 import sqlite3
+
+try:
+    import psycopg
+except ImportError:  # SQLite vẫn được dùng khi chạy local không có DATABASE_URL
+    psycopg = None
 import logging
 import signal
 import uuid
@@ -36,7 +41,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFqF4_lljdHj-zZ4ggJBzB8c6HgYTuWMLs").strip() 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHbLA-pCXYuBQx4oGr8F3aimfYBWgOcxp4").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -51,6 +56,7 @@ XAC_MINH_SO_TK = os.getenv("XAC_MINH_SO_TK", "25607451")
 CAPTCHA_TTL_SECONDS = 5 * 60
 CAPTCHA_LENGTH = 5
 CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 # Render/polling: chỉ chạy 1 instance/worker với BOT_TOKEN này.
 # Không chạy đồng thời bot.py ở máy cá nhân/VPS/Render service khác.
@@ -156,7 +162,90 @@ HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 # ============================================================
 # DATABASE
 # ============================================================
+class _DBRow(dict):
+    """Row tương thích với sqlite3.Row: hỗ trợ cả row["column"] và row[0]."""
+    def __init__(self, columns, values):
+        super().__init__(zip(columns, values))
+        self._columns = columns
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return dict.__getitem__(self, self._columns[key])
+        return dict.__getitem__(self, key)
+
+
+class _PGResult:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self._columns = [d.name for d in (cursor.description or [])]
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return _DBRow(self._columns, row)
+
+    def fetchall(self):
+        return [_DBRow(self._columns, row) for row in self._cursor.fetchall()]
+
+
+class _PGConnection:
+    """Adapter nhỏ để giữ nguyên phần lớn SQL hiện tại của bot."""
+    def __init__(self, url):
+        if psycopg is None:
+            raise RuntimeError(
+                "Thiếu psycopg. Hãy thêm psycopg[binary] vào requirements.txt."
+            )
+        self._conn = psycopg.connect(url, connect_timeout=15)
+        self._conn.autocommit = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type:
+                self.rollback()
+            else:
+                self.commit()
+        finally:
+            self.close()
+        return False
+
+    @staticmethod
+    def _convert_sql(query):
+        # Code cũ dùng placeholder SQLite '?'. Psycopg dùng '%s'.
+        query = query.replace("BEGIN IMMEDIATE", "BEGIN")
+        return query.replace("?", "%s")
+
+    def execute(self, query, params=None):
+        cur = self._conn.cursor()
+        cur.execute(self._convert_sql(query), params or ())
+        return _PGResult(cur)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+
 def db():
+    """
+    DATABASE_URL -> Neon PostgreSQL (production/persistent).
+    Không có DATABASE_URL -> SQLite local để chạy thử trên máy.
+    Trên Render bắt buộc đặt DATABASE_URL để dữ liệu không bị reset.
+    """
+    if DATABASE_URL:
+        return _PGConnection(DATABASE_URL)
+
     conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
@@ -164,7 +253,6 @@ def db():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
-
 
 def now_vn():
     return datetime.now(VN_TZ)
@@ -179,17 +267,21 @@ def h(value):
 
 
 def init_db():
+    """
+    Khởi tạo schema trên Neon PostgreSQL.
+    Nếu DATABASE_URL chưa được cấu hình thì dùng SQLite local.
+    """
     with db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
+                id BIGINT PRIMARY KEY,
                 ten TEXT NOT NULL,
                 cap_bac TEXT NOT NULL DEFAULT 'Thành viên',
-                so_du INTEGER NOT NULL DEFAULT 0,
+                so_du BIGINT NOT NULL DEFAULT 0,
                 video_da_xem INTEGER NOT NULL DEFAULT 0,
                 video_ngay INTEGER NOT NULL DEFAULT 0,
                 gioi_thieu INTEGER NOT NULL DEFAULT 0,
-                ref_by INTEGER,
+                ref_by BIGINT,
                 ngay_vao TEXT NOT NULL,
                 captcha_da_xac_minh INTEGER NOT NULL DEFAULT 0,
                 ngay_reset TEXT NOT NULL,
@@ -202,9 +294,9 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS withdrawals (
                 request_id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 ten TEXT NOT NULL,
-                so_tien INTEGER NOT NULL,
+                so_tien BIGINT NOT NULL,
                 tai_khoan TEXT NOT NULL,
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending'
@@ -214,11 +306,11 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS deposits (
                 request_id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 ten TEXT NOT NULL,
                 goi_key TEXT NOT NULL,
                 cap_moi TEXT NOT NULL,
-                gia INTEGER NOT NULL,
+                gia BIGINT NOT NULL,
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 photo_file_id TEXT
@@ -228,9 +320,9 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS verification_requests (
                 request_id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 ten TEXT NOT NULL,
-                phi INTEGER NOT NULL,
+                phi BIGINT NOT NULL,
                 thoi_gian TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 photo_file_id TEXT,
@@ -238,35 +330,61 @@ def init_db():
             )
         """)
 
-        # Migration cho database cũ.
-        try:
+        # Schema migration an toàn cho database cũ.
+        if DATABASE_URL:
             conn.execute(
-                "ALTER TABLE users ADD COLUMN xac_minh_nguoi_that "
-                "INTEGER NOT NULL DEFAULT 0"
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "xac_minh_nguoi_that INTEGER NOT NULL DEFAULT 0"
             )
-        except sqlite3.OperationalError:
-            pass
-
-        try:
             conn.execute(
-                "ALTER TABLE verification_requests ADD COLUMN photo_file_id TEXT"
+                "ALTER TABLE verification_requests ADD COLUMN IF NOT EXISTS "
+                "photo_file_id TEXT"
             )
-        except sqlite3.OperationalError:
-            pass
-
-        try:
             conn.execute(
-                "ALTER TABLE verification_requests ADD COLUMN phuong_thuc TEXT NOT NULL DEFAULT 'nap_30000'"
+                "ALTER TABLE verification_requests ADD COLUMN IF NOT EXISTS "
+                "phuong_thuc TEXT NOT NULL DEFAULT 'nap_30000'"
             )
-        except sqlite3.OperationalError:
-            pass
+        else:
+            # SQLite không hỗ trợ IF NOT EXISTS cho ADD COLUMN.
+            try:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN xac_minh_nguoi_that "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE verification_requests ADD COLUMN photo_file_id TEXT"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE verification_requests ADD COLUMN phuong_thuc "
+                    "TEXT NOT NULL DEFAULT 'nap_30000'"
+                )
+            except sqlite3.OperationalError:
+                pass
 
-        # Index giúp danh sách admin và kiểm tra đơn nhanh hơn khi dữ liệu lớn.
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_ref_by ON users(ref_by)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status, thoi_gian)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_deposits_status ON deposits(status, thoi_gian)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_verification_status ON verification_requests(status, thoi_gian)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_ref_by ON users(ref_by)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_withdrawals_status "
+            "ON withdrawals(status, thoi_gian)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_deposits_status "
+            "ON deposits(status, thoi_gian)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_verification_status "
+            "ON verification_requests(status, thoi_gian)"
+        )
 
+        # Sau restart/redeploy, một phiên xem đang dở không nên khóa tài khoản.
+        conn.execute("UPDATE users SET dang_xem=0 WHERE dang_xem=1")
 
 def row_to_user(row):
     return dict(row) if row else None
@@ -651,7 +769,7 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     with db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN")
         row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         if not row:
             conn.rollback()
@@ -1201,7 +1319,7 @@ async def xac_minh_bang_so_du_callback(update: Update, context: ContextTypes.DEF
         return
 
     with db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN")
         row = conn.execute(
             "SELECT * FROM users WHERE id=?", (u["id"],)
         ).fetchone()
@@ -1219,10 +1337,24 @@ async def xac_minh_bang_so_du_callback(update: Update, context: ContextTypes.DEF
             return
 
         request_id = f"XMSD{row['id']}{int(time.time() * 1000)}"
-        conn.execute(
-            "UPDATE users SET so_du=so_du-?, xac_minh_nguoi_that=1 WHERE id=? AND so_du>=? AND xac_minh_nguoi_that=0",
+
+        changed = conn.execute(
+            """
+            UPDATE users
+            SET so_du=so_du-?, xac_minh_nguoi_that=1
+            WHERE id=? AND so_du>=? AND xac_minh_nguoi_that=0
+            """,
             (PHI_XAC_MINH_SO_DU, row["id"], PHI_XAC_MINH_SO_DU),
-        )
+        ).rowcount
+
+        if changed != 1:
+            conn.rollback()
+            await query.answer(
+                "❌ Tài khoản vừa được xác minh hoặc số dư không đủ.",
+                show_alert=True,
+            )
+            return
+
         conn.execute(
             """
             INSERT INTO verification_requests
@@ -1648,18 +1780,14 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
 # SECURITY / BUSINESS-RULE HELPERS
 # ============================================================
 def user_is_verified(user_id: int) -> bool:
-    """Return whether the user has completed the human verification."""
+    """Kiểm tra trạng thái xác minh người thật của người dùng."""
     try:
-        row = conn.execute(
-            "SELECT verified FROM users WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        if not row:
-            return False
-        value = row[0]
-        return value in (1, True, "1", "true", "True", "verified")
+        u = get_user(user_id)
+        return bool(u and u.get("xac_minh_nguoi_that", 0))
     except Exception:
-        LOGGER.exception("Không thể kiểm tra trạng thái xác minh user_id=%s", user_id)
+        LOGGER.exception(
+            "Không thể kiểm tra trạng thái xác minh user_id=%s", user_id
+        )
         return False
 
 
@@ -1907,7 +2035,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         request_id = data.split(":", 1)[1]
 
         with db() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("BEGIN")
             yc = conn.execute(
                 """
                 SELECT * FROM withdrawals
@@ -2026,7 +2154,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         approved_verifications = []
 
         with db() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("BEGIN")
 
             verification_rows = conn.execute(
                 """
@@ -2255,7 +2383,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
     if data == "admin_ds_rut":
         with db() as conn:
             rows = conn.execute(
-                "SELECT w.* FROM withdrawals w JOIN users u ON u.user_id = w.user_id WHERE w.status='pending' AND u.verified=1 ORDER BY thoi_gian DESC"
+                "SELECT w.* FROM withdrawals w JOIN users u ON u.id = w.user_id WHERE w.status='pending' AND u.xac_minh_nguoi_that=1 ORDER BY w.thoi_gian DESC"
             ).fetchall()
 
         if not rows:
@@ -2881,7 +3009,15 @@ if __name__ == "__main__":
                 "Hãy thêm ADMIN_ID vào Environment Variables của Render."
             )
 
+        if os.getenv("RENDER") and not DATABASE_URL:
+            raise RuntimeError(
+                "Thiếu DATABASE_URL. Hãy thêm connection string PostgreSQL của Neon "
+                "vào Render > Environment Variables."
+            )
+
         init_db()
+        backend = "Neon PostgreSQL" if DATABASE_URL else f"SQLite ({DB_FILE})"
+        LOGGER.info("Database backend: %s", backend)
         asyncio.run(run_bot())
 
     except KeyboardInterrupt:
