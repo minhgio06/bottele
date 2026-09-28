@@ -56,6 +56,7 @@ LINK_KENH_YEU_CAU_1 = os.getenv("LINK_KENH_YEU_CAU_1", "https://t.me/rutxutiktok
 LINK_KENH_YEU_CAU_2 = os.getenv("LINK_KENH_YEU_CAU_2", "https://t.me/thongbaoxutiktok").strip()
 KENH_YEU_CAU = KENH_YEU_CAU_2  # tương thích với code cũ
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
+KENH_THONG_BAO_RUT = os.getenv("KENH_THONG_BAO_RUT", "@rutxutiktok").strip()
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
 PHI_XAC_MINH_SO_DU = 50_000
@@ -1134,10 +1135,18 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Các thông tin liên hệ được chuyển thành nút bấm trực tiếp.
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎧 LIÊN HỆ HỖ TRỢ", url="https://t.me/hotroxutiktok")],
+        [InlineKeyboardButton("📢 KÊNH THÔNG BÁO", url="https://t.me/rutxutiktok")],
+    ])
+
     await update.message.reply_text(
-        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @hotroxutiktok\n📢 Kênh thông báo: @rutxutiktok\n⏰ 8:00 - 22:00 hàng ngày",
+        "🎧 <b>HỖ TRỢ</b>\n\n"
+        "Bấm nút bên dưới để liên hệ hỗ trợ hoặc xem kênh thông báo.\n\n"
+        "⏰ 8:00 - 22:00 hàng ngày",
         parse_mode="HTML",
-        reply_markup=menu_chinh(update.effective_user.id),
+        reply_markup=keyboard,
     )
 
 
@@ -3296,3 +3305,37 @@ if __name__ == "__main__":
         print("Bot đã dừng.")
     except Exception as exc:
         print("BOT START ERROR:", repr(exc))
+
+async def gui_thong_bao_rut_thanh_cong(
+    context,
+    ma_rut,
+    so_tien,
+    tai_khoan,
+    ten_nguoi_nhan,
+):
+    """Gửi thông báo giao dịch rút thành công vào kênh @rutxutiktok."""
+    if not KENH_THONG_BAO_RUT:
+        return
+
+    text = (
+        "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
+        f"📋 Mã: <code>{ma_rut}</code>\n"
+        f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
+        f"🔗 Tài khoản: {tai_khoan}\n"
+        f"👤 Người nhận: <b>{ten_nguoi_nhan}</b>\n\n"
+        "✅ <b>Đã duyệt.</b>"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=KENH_THONG_BAO_RUT,
+            text=text,
+            parse_mode="HTML",
+        )
+        LOGGER.info(
+            "Đã gửi thông báo rút %s vào %s",
+            ma_rut,
+            KENH_THONG_BAO_RUT,
+        )
+    except Exception as exc:
+        LOGGER.exception("Không gửi được thông báo rút vào kênh: %r", exc)
