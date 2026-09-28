@@ -30,7 +30,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAGtwrjyqRf32jnPXwwcwFCuHIHdtSaiyEU") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAEgm836u0wMaIQEIa-s1wW6f6DMcT1TJUU") 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -942,49 +942,40 @@ async def rut_bi_khoa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def xac_minh_nguoi_that_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hiển thị 2 phương thức xác minh: trừ số dư 50.000đ hoặc nạp 30.000đ."""
+    """Màn hình chọn phương thức xác minh, thiết kế gọn cho Telegram mobile."""
     query = update.callback_query
-    await query.answer()
-
     u = get_user(update.effective_user.id)
     if not u:
+        await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
         return
 
     if u.get("xac_minh_nguoi_that", 0):
-        await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
+        await query.answer("✅ Tài khoản đã được xác minh.", show_alert=True)
         return
 
-    await query.edit_message_text(
-        f"""🛡 <b>XÁC MINH NGƯỜI THẬT</b>
-
-
-Chọn một trong 2 phương thức:
-
-
-💰 <b>Phương thức 1 — Trừ số dư</b>
-• Trừ trực tiếp <b>{PHI_XAC_MINH_SO_DU:,}đ</b> trong số dư
-• Không cần gửi biên lai
-• Xác minh ngay nếu số dư đủ
-
-💳 <b>Phương thức 2 — Nạp tiền</b>
-• Chuyển khoản <b>{PHI_XAC_MINH:,}đ</b>
-• Gửi ảnh biên lai
-• Admin kiểm tra và duyệt thủ công
-
-⚠️ Chọn đúng phương thức trước khi thực hiện.""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"💰 Trừ {PHI_XAC_MINH_SO_DU:,}đ từ số dư",
-                callback_data="xac_minh_so_du",
-            )],
-            [InlineKeyboardButton(
-                f"💳 Nạp {PHI_XAC_MINH:,}đ để xác minh",
-                callback_data="xac_minh_nap_30k",
-            )],
-            [InlineKeyboardButton("🏠 Menu chính", callback_data="ve_menu_chinh")],
-        ]),
+    await query.answer()
+    text = (
+        "🛡 <b>XÁC MINH NGƯỜI THẬT</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Chọn <b>1 trong 2 cách</b>:\n\n"
+        f"💰 <b>Trừ số dư</b> · {PHI_XAC_MINH_SO_DU:,}đ\n"
+        "└ Xác minh ngay, không cần biên lai\n\n"
+        f"💳 <b>Nạp tiền</b> · {PHI_XAC_MINH:,}đ\n"
+        "└ Chuyển khoản → gửi biên lai → Admin duyệt\n\n"
+        "⚠️ Kiểm tra kỹ phương thức trước khi thực hiện."
     )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"💰 Trừ {PHI_XAC_MINH_SO_DU:,}đ từ số dư",
+            callback_data="xac_minh_so_du",
+        )],
+        [InlineKeyboardButton(
+            f"💳 Nạp {PHI_XAC_MINH:,}đ để xác minh",
+            callback_data="xac_minh_nap_30k",
+        )],
+        [InlineKeyboardButton("🏠 Menu chính", callback_data="ve_menu_chinh")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def ve_menu_chinh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1067,16 +1058,16 @@ async def xac_minh_bang_so_du_callback(update: Update, context: ContextTypes.DEF
 
 
 async def xac_minh_nap_30k_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tạo yêu cầu xác minh bằng cách nạp 30.000đ và gửi biên lai."""
+    """Tạo yêu cầu xác minh bằng chuyển khoản 30.000đ."""
     query = update.callback_query
-    await query.answer()
-
     u = get_user(update.effective_user.id)
     if not u:
-        return ConversationHandler.END
+        await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
+        return
     if u.get("xac_minh_nguoi_that", 0):
-        await query.answer("✅ Bạn đã được xác minh.", show_alert=True)
-        return ConversationHandler.END
+        await query.answer("✅ Tài khoản đã được xác minh.", show_alert=True)
+        return
+    await query.answer()
 
     with db() as conn:
         old = conn.execute(
@@ -1098,21 +1089,68 @@ async def xac_minh_nap_30k_callback(update: Update, context: ContextTypes.DEFAUL
             )
 
     context.user_data["dang_xac_minh"] = request_id
-    await query.edit_message_text(
-        f"""💳 <b>XÁC MINH BẰNG NẠP TIỀN</b>
-
-💰 Số tiền: <b>{PHI_XAC_MINH:,}đ</b>
-🏦 Ngân hàng: <b>{h(XAC_MINH_NGAN_HANG)}</b>
-👤 Chủ TK: <b>{h(XAC_MINH_CHU_TK)}</b>
-🔢 Số TK: <code>{h(XAC_MINH_SO_TK)}</code>
-📝 Nội dung: <code>XACMINH {u['id']}</code>
-
-📸 Sau khi chuyển khoản, hãy gửi <b>ảnh biên lai</b> vào chat này.
-⏳ Admin sẽ kiểm tra và duyệt thủ công.""",
-        parse_mode="HTML",
-        reply_markup=menu_chinh(u["id"]),
+    content = (
+        "💳 <b>XÁC MINH BẰNG CHUYỂN KHOẢN</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"💰 <b>Số tiền:</b> {PHI_XAC_MINH:,}đ\n\n"
+        "🏦 <b>NGÂN HÀNG ACB</b>\n"
+        f"👤 <b>Chủ TK:</b> {h(XAC_MINH_CHU_TK)}\n"
+        f"🔢 <b>Số TK:</b> <code>{h(XAC_MINH_SO_TK)}</code>\n"
+        f"📝 <b>Nội dung:</b> <code>XACMINH {u['id']}</code>\n\n"
+        "📌 <b>Thực hiện:</b>\n"
+        "1️⃣ Chuyển đúng 30.000đ\n"
+        "2️⃣ Bấm <b>Đã chuyển khoản</b>\n"
+        "3️⃣ Gửi ảnh biên lai vào chat\n\n"
+        "⏳ Admin sẽ kiểm tra giao dịch và duyệt."
     )
-    return XAC_MINH_GUI_ANH
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Đã chuyển khoản — Gửi biên lai", callback_data="xac_minh_da_chuyen_khoan")],
+        [InlineKeyboardButton("↩️ Đổi phương thức", callback_data="xac_minh_nguoi_that")],
+        [InlineKeyboardButton("🏠 Menu chính", callback_data="ve_menu_chinh")],
+    ])
+    await query.edit_message_text(content, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def xac_minh_da_chuyen_khoan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Chuyển sang trạng thái chờ ảnh biên lai."""
+    query = update.callback_query
+    u = get_user(update.effective_user.id)
+    if not u:
+        await query.answer("❌ Không tìm thấy tài khoản.", show_alert=True)
+        return
+    await query.answer()
+
+    request_id = context.user_data.get("dang_xac_minh")
+    if not request_id:
+        with db() as conn:
+            row = conn.execute(
+                """SELECT request_id FROM verification_requests
+                   WHERE user_id=? AND status='pending' AND phuong_thuc='nap_30000'
+                   ORDER BY thoi_gian DESC LIMIT 1""",
+                (u["id"],),
+            ).fetchone()
+        if row:
+            request_id = row["request_id"]
+            context.user_data["dang_xac_minh"] = request_id
+
+    if not request_id:
+        await query.answer("❌ Không tìm thấy yêu cầu. Vui lòng chọn lại.", show_alert=True)
+        return
+
+    text = (
+        "📸 <b>GỬI BIÊN LAI</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Bạn đã chọn xác minh bằng chuyển khoản.\n\n"
+        f"💰 Số tiền: <b>{PHI_XAC_MINH:,}đ</b>\n"
+        f"📝 Nội dung: <code>XACMINH {u['id']}</code>\n\n"
+        "👉 <b>Bây giờ hãy gửi ảnh biên lai chuyển khoản vào chat này.</b>\n"
+        "⚠️ Chỉ gửi ảnh biên lai rõ ràng, không gửi thông tin thẻ hoặc mã bảo mật."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩️ Quay lại", callback_data="xac_minh_nap_30k")],
+        [InlineKeyboardButton("🏠 Menu chính", callback_data="ve_menu_chinh")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def nhan_anh_xac_minh(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2409,30 +2447,8 @@ def build_application():
         allow_reentry=True,
     )
 
-    # Conversation: xác minh người thật -> chờ người dùng gửi ảnh biên lai.
-    # ConversationHandler phải được đăng ký trước callback handler cùng pattern
-    # để callback entry-point chuyển đúng sang state XAC_MINH_GUI_ANH.
-    xac_minh_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(
-                xac_minh_nguoi_that_callback,
-                pattern=r"^xac_minh_nguoi_that$",
-            ),
-            CallbackQueryHandler(
-                xac_minh_nap_30k_callback,
-                pattern=r"^xac_minh_nap_30k$",
-            ),
-        ],
-        states={
-            XAC_MINH_GUI_ANH: [
-                MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_user=True,
-        per_chat=True,
-        allow_reentry=True,
-    )
+    # Xác minh người thật không phụ thuộc ConversationHandler.
+    # Callback sẽ lưu request_id vào user_data, sau đó photo handler sẽ nhận biên lai.
 
     app.add_handler(
         CallbackQueryHandler(
@@ -2494,7 +2510,33 @@ def build_application():
     app.add_handler(nap_conv, group=1)
     app.add_handler(rut_conv, group=1)
     app.add_handler(admin_conv, group=0)
-    app.add_handler(xac_minh_conv, group=0)
+
+    # Xác minh: chọn phương thức / xác nhận chuyển khoản / quay lại.
+    app.add_handler(
+        CallbackQueryHandler(
+            xac_minh_nguoi_that_callback,
+            pattern=r"^xac_minh_nguoi_that$",
+        ),
+        group=0,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            xac_minh_nap_30k_callback,
+            pattern=r"^xac_minh_nap_30k$",
+        ),
+        group=0,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            xac_minh_da_chuyen_khoan_callback,
+            pattern=r"^xac_minh_da_chuyen_khoan$",
+        ),
+        group=0,
+    )
+    app.add_handler(
+        MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
+        group=0,
+    )
 
     app.add_handler(
         MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so)
