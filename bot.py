@@ -43,8 +43,8 @@ from telegram.ext import (
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
-KENH_THONG_BAO_RUT = os.getenv("KENH_THONG_BAO_RUT", "@thongbaoruttientiktok")
+KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok", "rutxutiktok")
+KENH_THONG_BAO_RUT = os.getenv("KENH_THONG_BAO_RUT", "@rutxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
