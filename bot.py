@@ -44,6 +44,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
+KENH_THONG_BAO_RUT = os.getenv("KENH_THONG_BAO_RUT", "@thongbaoruttientiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
@@ -158,6 +159,64 @@ GOI_NANG_CAP = {
 
 HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 
+
+
+async def gui_thong_bao_rut_thanh_cong(bot, yc):
+    """
+    Đăng thông báo rút tiền thành công lên kênh Telegram.
+    KENH_THONG_BAO_RUT có thể là @username của kênh hoặc chat_id dạng -100...
+    Bot phải được thêm vào kênh và có quyền đăng tin.
+    """
+    tai_khoan = str(yc["tai_khoan"] or "").strip()
+
+    # Dạng lưu hiện tại: "MoMo 0123456789 NGUYEN VAN A"
+    # Lấy loại tài khoản = từ đầu, số tài khoản = token tiếp theo,
+    # phần còn lại là tên chủ tài khoản.
+    parts = tai_khoan.split()
+    loai = parts[0] if parts else "TÀI KHOẢN"
+    so_tk = parts[1] if len(parts) > 1 else ""
+    ten_chu = " ".join(parts[2:]) if len(parts) > 2 else yc["ten"]
+
+    # Che số tài khoản, giữ 4 số cuối như mẫu.
+    digits = re.sub(r"\D", "", so_tk)
+    if len(digits) >= 4:
+        so_tk_mask = "*" * max(4, len(digits) - 4) + digits[-4:]
+    elif so_tk:
+        so_tk_mask = "*" * len(so_tk)
+    else:
+        so_tk_mask = "****"
+
+    # Chuẩn hóa tên dịch vụ hiển thị.
+    loai_upper = loai.upper()
+    if loai_upper in {"MOMO", "MOMO."}:
+        loai_hien_thi = "Momo"
+    elif loai_upper in {"ZALOPAY", "ZALO", "ZALO-PAY"}:
+        loai_hien_thi = "ZALOPAY"
+    elif loai_upper in {"AGRIBANK", "AGRI"}:
+        loai_hien_thi = "AGRIBANK"
+    else:
+        loai_hien_thi = loai
+
+    text = (
+        "💸 <b>RÚT TIỀN THÀNH CÔNG</b>\n\n"
+        f"🏦 Tài khoản: {h(loai_hien_thi)}\n"
+        f"🔢 Số tài khoản: <code>{h(so_tk_mask)}</code>\n"
+        f"👤 Chủ tài khoản: {h(ten_chu)}\n"
+        f"💰 Số tiền: {yc['so_tien']:,}đ"
+    )
+
+    try:
+        await bot.send_message(
+            chat_id=KENH_THONG_BAO_RUT,
+            text=text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        LOGGER.exception(
+            "Không thể đăng thông báo rút tiền lên kênh %s",
+            KENH_THONG_BAO_RUT,
+        )
 
 # ============================================================
 # DATABASE
@@ -2138,6 +2197,9 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         except Exception as exc:
             print("SEND APPROVE NOTICE ERROR:", repr(exc))
 
+        # Thông báo công khai trên kênh sau khi đơn đã được duyệt và trừ tiền thành công.
+        await gui_thong_bao_rut_thanh_cong(context.bot, yc)
+
         await query.edit_message_text(
             f"✅ Đã duyệt {h(request_id)} — Trừ {yc['so_tien']:,}đ."
         )
@@ -2309,6 +2371,11 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                 pass
 
         for yc in approved_withdrawals:
+            try:
+                await gui_thong_bao_rut_thanh_cong(context.bot, yc)
+            except Exception:
+                LOGGER.exception("Lỗi đăng thông báo rút tiền hàng loạt")
+
             try:
                 await context.bot.send_message(
                     chat_id=yc["user_id"],
