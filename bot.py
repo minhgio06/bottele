@@ -30,7 +30,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFL8ab-zheRorpwEf7Ol1cki_9RVjsfB6I") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAG4y0Xl5FxQ1mGkYfkEr67oJCmokJY33P0") 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -2248,6 +2248,27 @@ def build_application():
         allow_reentry=True,
     )
 
+    # Conversation: xác minh người thật -> chờ người dùng gửi ảnh biên lai.
+    # ConversationHandler phải được đăng ký trước callback handler cùng pattern
+    # để callback entry-point chuyển đúng sang state XAC_MINH_GUI_ANH.
+    xac_minh_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(
+                xac_minh_nguoi_that_callback,
+                pattern=r"^xac_minh_nguoi_that$",
+            ),
+        ],
+        states={
+            XAC_MINH_GUI_ANH: [
+                MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_user=True,
+        per_chat=True,
+        allow_reentry=True,
+    )
+
     # Callback Admin: duyệt đơn, xác minh, danh sách, duyệt tất cả.
     app.add_handler(
         CallbackQueryHandler(
@@ -2279,14 +2300,6 @@ def build_application():
 
     app.add_handler(
         CallbackQueryHandler(
-            xac_minh_nguoi_that_callback,
-            pattern=r"^xac_minh_nguoi_that$",
-        ),
-        group=0,
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(
             rut_bi_khoa_callback,
             pattern=r"^rut_bi_khoa$",
         ),
@@ -2299,12 +2312,7 @@ def build_application():
     app.add_handler(nap_conv, group=1)
     app.add_handler(rut_conv, group=1)
     app.add_handler(admin_conv, group=0)
-
-    # Ảnh biên lai xác minh 30.000đ. Handler kiểm tra cờ trong user_data.
-    app.add_handler(
-        MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
-        group=1,
-    )
+    app.add_handler(xac_minh_conv, group=0)
 
     app.add_handler(
         MessageHandler(filters.Regex(r"^👤 Hồ Sơ$"), ho_so)
