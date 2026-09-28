@@ -7,6 +7,10 @@ import logging
 import signal
 import uuid
 import threading
+import io
+import random
+import string
+from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -32,7 +36,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFAJJ2dYdCyWRJzQDot2kiNawJLReABKsw").strip() 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFqF4_lljdHj-zZ4ggJBzB8c6HgYTuWMLs").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok")
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
@@ -42,6 +46,11 @@ PHI_XAC_MINH_SO_DU = 50_000
 XAC_MINH_NGAN_HANG = os.getenv("XAC_MINH_NGAN_HANG", "ACB")
 XAC_MINH_CHU_TK = os.getenv("XAC_MINH_CHU_TK", "HA QUANG MINH")
 XAC_MINH_SO_TK = os.getenv("XAC_MINH_SO_TK", "25607451")
+
+# CAPTCHA kiểu ảnh giống giao diện mẫu.
+CAPTCHA_TTL_SECONDS = 5 * 60
+CAPTCHA_LENGTH = 5
+CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
 # Render/polling: chỉ chạy 1 instance/worker với BOT_TOKEN này.
 # Không chạy đồng thời bot.py ở máy cá nhân/VPS/Render service khác.
@@ -403,9 +412,9 @@ def reset_daily_if_needed(u):
 def menu_chinh(user_id=None):
     rows = [
         [KeyboardButton("👤 Hồ Sơ"), KeyboardButton("🔍 Xem TikTok")],
-        [KeyboardButton("👥 Khu Vực Leader"), KeyboardButton("👑 Nâng Cấp Bậc")],
-        [KeyboardButton("💰 Rút Tiền"), KeyboardButton("🎧 Hỗ Trợ")],
-        [KeyboardButton("🔐 Nhập CaptCha")],
+        [KeyboardButton("👥 Cấp Giới Thiệu"), KeyboardButton("👑 Nâng Cấp Bậc")],
+        [KeyboardButton("🎧 Hỗ Trợ"), KeyboardButton("🔐 Nhập CaptCha")],
+        [KeyboardButton("💰 Rút Tiền")],
     ]
     if user_id == ADMIN_ID:
         rows.insert(2, [KeyboardButton("🎛 QUẢN LÝ ADMIN")])
@@ -531,26 +540,19 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reset_daily_if_needed(u)
-    cfg = CAP_BAC_CONFIG[u["cap_bac"]]
-    tk_info = u["tai_khoan"] or "Chưa liên kết"
     xac_minh = "✅ Đã xác minh" if u.get("xac_minh_nguoi_that", 0) else "🔒 Chưa xác minh"
 
     await update.message.reply_text(
-        f"""👤 HỒ SƠ CỦA BẠN
+        f"""👤 <b>HỒ SƠ</b>
 
 🆔 ID: <code>{u['id']}</code>
 👤 Tên: {h(u['ten'])}
-👑 Cấp bậc: {h(u['cap_bac'])}
-💰 Số dư: {u['so_du']:,}đ
+👑 Cấp bậc: <b>{h(u['cap_bac'])}</b>
+💰 Số dư: <b>{u['so_du']:,}đ</b>
+👥 Cấp giới thiệu: <b>{u['gioi_thieu']}</b>
+🛡 Xác minh: {xac_minh}
 
-📺 Xem hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']} video
-💵 Thưởng/video: {cfg['xu_moi_video']:,}đ
-
-👥 Người giới thiệu: {u['gioi_thieu']}
-📅 Tham gia: {u['ngay_vao']}
-
-🔗 Tài khoản rút tiền: {h(tk_info)}
-🛡 Xác minh người thật: {xac_minh}""",
+🔗 Tài khoản rút: {h(u['tai_khoan'] or 'Chưa liên kết')}""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
     )
@@ -735,6 +737,7 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Khu vực riêng cho cấp giới thiệu và link giới thiệu."""
     u = get_user(update.effective_user.id)
     if not u:
         return
@@ -742,35 +745,22 @@ async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     me = await context.bot.get_me()
     link = f"https://t.me/{me.username}?start={u['id']}"
 
-    thong_tin_cap = ""
-    for cap, cfg in CAP_BAC_CONFIG.items():
-        thong_tin_cap += (
-            f"👑 {cap}: {cfg['gioi_han_xem_ngay']} video/ngày — "
-            f"{cfg['xu_moi_video']:,}đ/video\n"
-        )
-
+    thuong = CAP_BAC_CONFIG[u["cap_bac"]]["thuong_gioi_thieu"]
     await update.message.reply_text(
-        f"""👥 <b>KHU VỰC LEADER</b>
+        f"""👥 <b>CẤP GIỚI THIỆU</b>
 
-👑 Cấp hiện tại: {h(u['cap_bac'])}
-📺 Giới hạn xem: {CAP_BAC_CONFIG[u['cap_bac']]['gioi_han_xem_ngay']} video/ngày
-💵 Thưởng/video: {CAP_BAC_CONFIG[u['cap_bac']]['xu_moi_video']:,}đ
-👥 Người giới thiệu: {u['gioi_thieu']}
+👥 Người đã giới thiệu: <b>{u['gioi_thieu']}</b>
+💰 Thưởng giới thiệu hiện tại: <b>{thuong:,}đ/người</b>
 
-💰 HOA HỒNG CẤP DƯỚI
-F1: 3% | F2: 2% | F3: 1%
-
-📊 <b>GIỚI HẠN XEM</b>
-{thong_tin_cap}
-📈 <b>MỐC CẤP BẬC</b>
-👤 0-29 → Thành viên
-🥈 30-99 → Leader Bạc
-🥇 100-299 → Leader Vàng
-💎 300-499 → Leader Bạch Kim
-💠 500-999 → Leader Kim Cương
+📈 <b>MỐC CẤP GIỚI THIỆU</b>
+👤 0–29 → Thành viên
+🥈 30–99 → Leader Bạc
+🥇 100–299 → Leader Vàng
+💎 300–499 → Leader Bạch Kim
+💠 500–999 → Leader Kim Cương
 👑 1.000+ → Leader Cao Thủ
 
-🔗 <b>LINK GIỚI THIỆU:</b>
+🔗 <b>LINK GIỚI THIỆU</b>
 <code>{link}</code>""",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
@@ -951,15 +941,183 @@ async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _captcha_font(size):
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    ]
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _make_captcha_image(code):
+    """Tạo PNG CAPTCHA với chữ lớn + đường nhiễu giống ảnh mẫu."""
+    width, height = 600, 220
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+
+    # Nhiễu đường thẳng.
+    for _ in range(32):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = random.randint(0, width)
+        y2 = random.randint(0, height)
+        shade = random.randint(120, 205)
+        draw.line((x1, y1, x2, y2), fill=(shade, shade, shade), width=random.randint(1, 3))
+
+    # Nhiễu chấm.
+    for _ in range(180):
+        x = random.randrange(width)
+        y = random.randrange(height)
+        shade = random.randint(130, 220)
+        r = random.choice((1, 1, 2))
+        draw.ellipse((x-r, y-r, x+r, y+r), fill=(shade, shade, shade))
+
+    font = _captcha_font(86)
+    total_width = sum(draw.textlength(ch, font=font) for ch in code)
+    x = (width - total_width) / 2
+
+    for ch in code:
+        bbox = draw.textbbox((0, 0), ch, font=font)
+        ch_w = draw.textlength(ch, font=font)
+        y = random.randint(55, 105)
+        draw.text(
+            (x, y),
+            ch,
+            font=font,
+            fill=(15, 15, 15),
+            stroke_width=1,
+            stroke_fill=(0, 0, 0),
+        )
+        x += ch_w + random.randint(2, 8)
+
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+def _new_captcha(context):
+    code = "".join(random.choice(CAPTCHA_ALPHABET) for _ in range(CAPTCHA_LENGTH))
+    context.user_data["captcha_code"] = code
+    context.user_data["captcha_created_at"] = time.time()
+    return code
+
+
+async def _send_captcha(update, context, edit=False):
+    code = _new_captcha(context)
+    image = _make_captcha_image(code)
+
+    caption = (
+        "🔐 <b>GIẢI CAPTCHA</b>\n\n"
+        "Nhập chính xác mã trong hình bên trên.\n"
+        "⏱ CAPTCHA có hiệu lực trong <b>5 phút</b>."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Đổi Captcha", callback_data="captcha_doi"),
+            InlineKeyboardButton("❌ Hủy Captcha", callback_data="captcha_huy"),
+        ]
+    ])
+
+    if edit and update.callback_query:
+        # Xóa tin nhắn cũ rồi gửi ảnh mới để Telegram hiển thị CAPTCHA rõ ràng.
+        try:
+            await update.callback_query.delete_message()
+        except Exception:
+            pass
+        await context.bot.send_photo(
+            chat_id=update.effective_user.id,
+            photo=image,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    else:
+        await update.message.reply_text("✨ Đang tạo Captcha, vui lòng chờ...")
+        await update.message.reply_photo(
+            photo=image,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+
 async def captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = get_user(update.effective_user.id)
     if not u:
+        await update.message.reply_text("Vui lòng gõ /start trước.")
         return
+
+    context.user_data.pop("captcha_code", None)
+    context.user_data.pop("captcha_created_at", None)
+    await _send_captcha(update, context)
+
+
+async def captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+
+    if data == "captcha_doi":
+        await query.answer("🔄 Đang tạo CAPTCHA mới...")
+        await _send_captcha(update, context, edit=True)
+        return
+
+    if data == "captcha_huy":
+        context.user_data.pop("captcha_code", None)
+        context.user_data.pop("captcha_created_at", None)
+        await query.answer("Đã hủy CAPTCHA.")
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="❌ Đã hủy CAPTCHA.",
+            reply_markup=menu_chinh(update.effective_user.id),
+        )
+
+
+async def captcha_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kiểm tra mã CAPTCHA người dùng nhập vào."""
+    code = context.user_data.get("captcha_code")
+    created = context.user_data.get("captcha_created_at")
+
+    if not code or not created:
+        return
+
+    answer = (update.message.text or "").strip().upper()
+    if time.time() - float(created) > CAPTCHA_TTL_SECONDS:
+        context.user_data.pop("captcha_code", None)
+        context.user_data.pop("captcha_created_at", None)
+        await update.message.reply_text(
+            "⏰ CAPTCHA đã hết hạn. Bấm '🔐 Nhập CaptCha' để tạo mã mới.",
+            reply_markup=menu_chinh(update.effective_user.id),
+        )
+        return
+
+    if answer != code:
+        await update.message.reply_text(
+            "❌ CAPTCHA không đúng. Vui lòng nhập lại hoặc bấm 'Đổi Captcha'."
+        )
+        return
+
+    u = get_user(update.effective_user.id)
+    if not u:
+        return
+
     u["captcha_da_xac_minh"] = True
     save_user(u)
+    context.user_data.pop("captcha_code", None)
+    context.user_data.pop("captcha_created_at", None)
+
     await update.message.reply_text(
-        "✅ <b>Đã xác minh thành công!</b>\n"
-        "Bây giờ có thể sử dụng chức năng xem video.",
+        "✅ <b>CAPTCHA chính xác!</b>\n\n"
+        "🔓 Bạn đã xác minh CAPTCHA thành công và có thể xem TikTok.",
         parse_mode="HTML",
         reply_markup=menu_chinh(u["id"]),
     )
@@ -2537,6 +2695,14 @@ def build_application():
 
     app.add_handler(
         CallbackQueryHandler(
+            captcha_callback,
+            pattern=r"^captcha_(doi|huy)$",
+        ),
+        group=0,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
             kiem_tra_kenh_callback,
             pattern=r"^kiem_tra_kenh$",
         ),
@@ -2589,6 +2755,14 @@ def build_application():
         group=0,
     )
     app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            captcha_text_handler,
+        ),
+        group=-1,
+    )
+
+    app.add_handler(
         MessageHandler(filters.PHOTO, nhan_anh_xac_minh),
         group=0,
     )
@@ -2600,7 +2774,7 @@ def build_application():
         MessageHandler(filters.Regex(r"^🔍 Xem TikTok$"), xem_tiktok)
     )
     app.add_handler(
-        MessageHandler(filters.Regex(r"^👥 Khu Vực Leader$"), khu_vuc_leader)
+        MessageHandler(filters.Regex(r"^👥 Cấp Giới Thiệu$"), khu_vuc_leader)
     )
     app.add_handler(
         MessageHandler(filters.Regex(r"^👑 Nâng Cấp Bậc$"), nang_cap)
