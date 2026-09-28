@@ -34,6 +34,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
+    ChatJoinRequestHandler,
     ContextTypes,
     filters,
 )
@@ -43,8 +44,17 @@ from telegram.ext import (
 # ============================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip() 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
-KENH_YEU_CAU = os.getenv("KENH_YEU_CAU", "@thongbaoxutiktok", "rutxutiktok")
-KENH_THONG_BAO_RUT = os.getenv("KENH_THONG_BAO_RUT", "@rutxutiktok")
+# Kênh bắt buộc:
+# - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
+# - LINK_KENH_YEU_CAU: link mời/link tham gia kênh.
+# Nếu dùng kênh riêng tư có "yêu cầu tham gia", hãy đặt LINK_KENH_YEU_CAU
+# là invite link của kênh (https://t.me/+...).
+KENH_THONG_BAO = os.getenv("KENH_THONG_BAO", "@rutxutiktok").strip()
+KENH_YEU_CAU_1 = os.getenv("KENH_YEU_CAU_1", "@rutxutiktok").strip()
+KENH_YEU_CAU_2 = os.getenv("KENH_YEU_CAU_2", "@thongbaoxutiktok").strip()
+LINK_KENH_YEU_CAU_1 = os.getenv("LINK_KENH_YEU_CAU_1", "https://t.me/rutxutiktok").strip()
+LINK_KENH_YEU_CAU_2 = os.getenv("LINK_KENH_YEU_CAU_2", "https://t.me/thongbaoxutiktok").strip()
+KENH_YEU_CAU = KENH_YEU_CAU_2  # tương thích với code cũ
 LINK_VIDEO = os.getenv("LINK_VIDEO", "https://vt.tiktok.com/ZSb6JTwaf/")
 RUT_TOI_THIEU = 50_000
 PHI_XAC_MINH = 30_000
@@ -109,6 +119,7 @@ ADMIN_CONG_SO_DU = 10
 ADMIN_TRU_SO_DU = 11
 ADMIN_GUI_TB = 12
 ADMIN_CONG_TAT_CA = 13
+ADMIN_SUA_NGUOI = 14
 NAP_GUI_ANH = 20
 XAC_MINH_GUI_ANH = 21
 
@@ -159,64 +170,6 @@ GOI_NANG_CAP = {
 
 HOA_HONG = {"f1": 0.03, "f2": 0.02, "f3": 0.01}
 
-
-
-async def gui_thong_bao_rut_thanh_cong(bot, yc):
-    """
-    Đăng thông báo rút tiền thành công lên kênh Telegram.
-    KENH_THONG_BAO_RUT có thể là @username của kênh hoặc chat_id dạng -100...
-    Bot phải được thêm vào kênh và có quyền đăng tin.
-    """
-    tai_khoan = str(yc["tai_khoan"] or "").strip()
-
-    # Dạng lưu hiện tại: "MoMo 0123456789 NGUYEN VAN A"
-    # Lấy loại tài khoản = từ đầu, số tài khoản = token tiếp theo,
-    # phần còn lại là tên chủ tài khoản.
-    parts = tai_khoan.split()
-    loai = parts[0] if parts else "TÀI KHOẢN"
-    so_tk = parts[1] if len(parts) > 1 else ""
-    ten_chu = " ".join(parts[2:]) if len(parts) > 2 else yc["ten"]
-
-    # Che số tài khoản, giữ 4 số cuối như mẫu.
-    digits = re.sub(r"\D", "", so_tk)
-    if len(digits) >= 4:
-        so_tk_mask = "*" * max(4, len(digits) - 4) + digits[-4:]
-    elif so_tk:
-        so_tk_mask = "*" * len(so_tk)
-    else:
-        so_tk_mask = "****"
-
-    # Chuẩn hóa tên dịch vụ hiển thị.
-    loai_upper = loai.upper()
-    if loai_upper in {"MOMO", "MOMO."}:
-        loai_hien_thi = "Momo"
-    elif loai_upper in {"ZALOPAY", "ZALO", "ZALO-PAY"}:
-        loai_hien_thi = "ZALOPAY"
-    elif loai_upper in {"AGRIBANK", "AGRI"}:
-        loai_hien_thi = "AGRIBANK"
-    else:
-        loai_hien_thi = loai
-
-    text = (
-        "💸 <b>RÚT TIỀN THÀNH CÔNG</b>\n\n"
-        f"🏦 Tài khoản: {h(loai_hien_thi)}\n"
-        f"🔢 Số tài khoản: <code>{h(so_tk_mask)}</code>\n"
-        f"👤 Chủ tài khoản: {h(ten_chu)}\n"
-        f"💰 Số tiền: {yc['so_tien']:,}đ"
-    )
-
-    try:
-        await bot.send_message(
-            chat_id=KENH_THONG_BAO_RUT,
-            text=text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        LOGGER.exception(
-            "Không thể đăng thông báo rút tiền lên kênh %s",
-            KENH_THONG_BAO_RUT,
-        )
 
 # ============================================================
 # DATABASE
@@ -599,37 +552,106 @@ def menu_chinh(user_id=None):
 
 
 async def kt_kenh(user_id, context):
-    """Kiểm tra người dùng đã tham gia kênh bắt buộc hay chưa."""
-    if not KENH_YEU_CAU:
-        return True
-    try:
-        m = await context.bot.get_chat_member(
-            chat_id=KENH_YEU_CAU, user_id=user_id
-        )
-        return m.status in {"member", "administrator", "creator"}
-    except Exception as exc:
-        # Nếu bot không có quyền kiểm tra thành viên kênh, coi như chưa xác minh
-        # để không cho người dùng bỏ qua bước tham gia.
-        print("CHECK CHANNEL ERROR:", repr(exc))
-        return False
+    """Kiểm tra người dùng đã tham gia đủ 2 kênh bắt buộc."""
+    channels = [KENH_YEU_CAU_1, KENH_YEU_CAU_2]
+    for channel in channels:
+        if not channel:
+            continue
+        try:
+            m = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if m.status in {"member", "administrator", "creator"}:
+                continue
+            if m.status == "restricted" and getattr(m, "is_member", False):
+                continue
+            return False
+        except Exception as exc:
+            LOGGER.warning("CHECK CHANNEL ERROR channel=%s: %r", channel, exc)
+            return False
+    return True
+
+
+def _channel_url(value, fallback):
+    value = (value or "").strip()
+    if value.startswith(("http://", "https://")):
+        return value
+    if value.startswith("@"):
+        return "https://t.me/" + value[1:]
+    return fallback
 
 
 def nut_kiem_tra_kenh():
-    """Nút mở kênh + nút kiểm tra lại sau khi người dùng đã tham gia."""
-    link = KENH_YEU_CAU
-    if link.startswith("@"):  # Telegram URL từ username kênh
-        link = "https://t.me/" + link[1:]
-    elif not link.startswith("http://") and not link.startswith("https://"):
-        link = "https://t.me/" + link.lstrip("/")
-
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 THAM GIA KÊNH", url=link)],
-        [InlineKeyboardButton("🔎 KIỂM TRA ĐÃ THAM GIA CHƯA", callback_data="kiem_tra_kenh")],
+        [InlineKeyboardButton("📢 THAM GIA @rutxutiktok", url=_channel_url(KENH_YEU_CAU_1, "https://t.me/rutxutiktok"))],
+        [InlineKeyboardButton("📢 THAM GIA @thongbaoxutiktok", url=_channel_url(KENH_YEU_CAU_2, "https://t.me/thongbaoxutiktok"))],
+        [InlineKeyboardButton("🔎 KIỂM TRA CẢ 2 KÊNH", callback_data="kiem_tra_kenh")],
     ])
 
 
+async def xu_ly_yeu_cau_tham_gia_kenh(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """
+    Xử lý Telegram Join Request.
+
+    Bot phải được thêm làm ADMIN của kênh và có quyền quản lý
+    yêu cầu tham gia. Khi người dùng bấm link yêu cầu tham gia,
+    bot sẽ tự duyệt request rồi nhắn cho người dùng mở bot.
+    """
+    req = update.chat_join_request
+    user = req.from_user
+
+    # Chỉ xử lý request của một trong hai kênh bắt buộc.
+    try:
+        allowed = {str(KENH_YEU_CAU_1), str(KENH_YEU_CAU_2)}
+        username = getattr(req.chat, "username", None)
+        username_forms = {str(username), f"@{username}"} if username else set()
+        if str(req.chat.id) not in allowed and not (allowed & username_forms):
+            return
+    except Exception:
+        return
+
+    try:
+        await req.approve()
+        LOGGER.info(
+            "Đã duyệt yêu cầu tham gia kênh: user_id=%s chat_id=%s",
+            user.id,
+            req.chat.id,
+        )
+    except Exception as exc:
+        LOGGER.exception("Không thể duyệt join request: %r", exc)
+        return
+
+    # Gửi hướng dẫn mở bot sau khi đã được duyệt.
+    try:
+        bot_username = (await context.bot.get_me()).username
+        if bot_username:
+            bot_link = f"https://t.me/{bot_username}?start=joined"
+            text = (
+                "✅ <b>YÊU CẦU THAM GIA ĐÃ ĐƯỢC DUYỆT!</b>\n\n"
+                "🎉 Bạn đã được duyệt vào kênh.\n"
+                "👉 Bấm nút bên dưới để mở bot và sử dụng bot."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 MỞ BOT", url=bot_link)]
+            ])
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+    except Exception as exc:
+        # Người dùng có thể chưa từng /start bot nên Telegram có thể không cho bot nhắn.
+        LOGGER.info(
+            "Không gửi được tin nhắn sau khi duyệt join request user=%s: %r",
+            user.id,
+            exc,
+        )
+
+
 async def yeu_cau_tham_gia_kenh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hiện yêu cầu tham gia kênh và cho phép người dùng bấm kiểm tra lại."""
+    """Hiện yêu cầu tham gia kênh và cho phép người dùng kiểm tra lại."""
     u = update.effective_user
     init_user(u.id, u.full_name)
 
@@ -644,7 +666,7 @@ async def yeu_cau_tham_gia_kenh(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         "🚀 <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
         "1️⃣ Bấm <b>THAM GIA KÊNH</b>\n"
-        "2️⃣ Tham gia kênh\n"
+        "2️⃣ Nếu kênh dùng yêu cầu tham gia, gửi yêu cầu và chờ bot duyệt\n"
         "3️⃣ Quay lại bot và bấm <b>KIỂM TRA ĐÃ THAM GIA CHƯA</b>",
         parse_mode="HTML",
         reply_markup=nut_kiem_tra_kenh(),
@@ -675,7 +697,8 @@ async def kiem_tra_kenh_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     await query.answer(
-        "❌ Chưa phát hiện bạn tham gia kênh. Hãy tham gia rồi bấm kiểm tra lại.",
+        "❌ Chưa phát hiện bạn tham gia kênh. "
+        "Nếu vừa gửi yêu cầu, hãy chờ bot duyệt rồi kiểm tra lại.",
         show_alert=True,
     )
 
@@ -1112,7 +1135,7 @@ async def nhan_anh_chuyen_khoan(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def ho_tro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @hotroxutiktok\n⏰ 8:00 - 22:00 hàng ngày",
+        "🎧 <b>HỖ TRỢ</b>\n\nLiên hệ: @hotroxutiktok\n📢 Kênh thông báo: @rutxutiktok\n⏰ 8:00 - 22:00 hàng ngày",
         parse_mode="HTML",
         reply_markup=menu_chinh(update.effective_user.id),
     )
@@ -1819,6 +1842,23 @@ async def nhap_thong_tin_tai_khoan(update: Update, context: ContextTypes.DEFAULT
         reply_markup=keyboard,
     )
 
+    # Đồng thời thông báo vào kênh công khai. Bot phải là admin kênh.
+    try:
+        await context.bot.send_message(
+            chat_id=KENH_THONG_BAO,
+            text=f"""📢 <b>YÊU CẦU RÚT TIỀN MỚI</b>
+
+🆔 ID: <code>{u['id']}</code>
+👤 Tên: {h(u['ten'])}
+💵 Số tiền: <b>{so_tien:,}đ</b>
+📋 Mã: <code>{h(request_id)}</code>
+📅 {now_vn().strftime('%d/%m/%Y %H:%M')}""",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as exc:
+        LOGGER.warning("Không gửi được thông báo kênh %s: %r", KENH_THONG_BAO, exc)
+
     await update.message.reply_text(
         f"""✅ <b>ĐÃ GỬI YÊU CẦU RÚT TIỀN</b>
 
@@ -1903,6 +1943,54 @@ async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
+def _admin_user_detail_keyboard(user_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💰 Cộng tiền", callback_data=f"admin_edit:cong:{user_id}"),
+            InlineKeyboardButton("💸 Trừ tiền", callback_data=f"admin_edit:tru:{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("💵 Đặt số dư", callback_data=f"admin_edit:setbal:{user_id}"),
+            InlineKeyboardButton("🏆 Đổi cấp", callback_data=f"admin_edit:cap:{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("🛡 Xác minh", callback_data=f"admin_edit:verify:{user_id}"),
+            InlineKeyboardButton("🔓 Bỏ xác minh", callback_data=f"admin_edit:unverify:{user_id}"),
+        ],
+        [InlineKeyboardButton("🔄 Reset CAPTCHA", callback_data=f"admin_edit:captcha:{user_id}")],
+        [InlineKeyboardButton("⬅️ Danh sách người dùng", callback_data="admin_ds_nguoi")],
+    ])
+
+
+def _admin_user_detail_text(u):
+    xac = "✅ Đã xác minh" if u.get("xac_minh_nguoi_that", 0) else "🔒 Chưa xác minh"
+    return (
+        "👤 <b>QUẢN LÝ NGƯỜI DÙNG</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 <code>{u['id']}</code>\n"
+        f"👤 Tên: <b>{h(u['ten'])}</b>\n"
+        f"💰 Số dư: <b>{u['so_du']:,}đ</b>\n"
+        f"🏆 Cấp: <b>{h(u['cap_bac'])}</b>\n"
+        f"🎬 Video đã xem: <b>{u['video_da_xem']}</b>\n"
+        f"👥 Giới thiệu: <b>{u['gioi_thieu']}</b>\n"
+        f"🛡 Trạng thái: <b>{xac}</b>\n"
+        f"🔐 CAPTCHA: {'✅' if u.get('captcha_da_xac_minh', 0) else '❌'}\n"
+        f"🏦 Tài khoản: <code>{h(u.get('tai_khoan') or 'Chưa liên kết')}</code>"
+    )
+
+
+async def _admin_hien_thi_nguoi(query, user_id):
+    u = get_user(user_id)
+    if not u:
+        await query.answer("❌ Không tìm thấy người dùng.", show_alert=True)
+        return
+    await query.message.reply_text(
+        _admin_user_detail_text(u),
+        parse_mode="HTML",
+        reply_markup=_admin_user_detail_keyboard(user_id),
+    )
+
+
 async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
@@ -1911,6 +1999,64 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     data = query.data
+
+    # --------------------------------------------------------
+    # QUẢN LÝ TỪNG NGƯỜI DÙNG
+    # --------------------------------------------------------
+    if data.startswith("admin_user:"):
+        try:
+            user_id = int(data.split(":", 1)[1])
+        except ValueError:
+            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            return
+        context.user_data["admin_user_id"] = user_id
+        await _admin_hien_thi_nguoi(query, user_id)
+        return
+
+    if data.startswith("admin_edit:"):
+        parts = data.split(":")
+        if len(parts) != 3:
+            await query.answer("❌ Dữ liệu không hợp lệ.", show_alert=True)
+            return
+        action, raw_id = parts[1], parts[2]
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            return
+        if not get_user(user_id):
+            await query.answer("❌ Không tìm thấy người dùng.", show_alert=True)
+            return
+        context.user_data["admin_user_id"] = user_id
+
+        if action == "verify":
+            with db() as conn:
+                conn.execute("UPDATE users SET xac_minh_nguoi_that=1 WHERE id=?", (user_id,))
+            await query.answer("✅ Đã xác minh người dùng.")
+            await _admin_hien_thi_nguoi(query, user_id)
+            return
+        if action == "unverify":
+            with db() as conn:
+                conn.execute("UPDATE users SET xac_minh_nguoi_that=0 WHERE id=?", (user_id,))
+            await query.answer("🔓 Đã bỏ xác minh.")
+            await _admin_hien_thi_nguoi(query, user_id)
+            return
+        if action == "captcha":
+            with db() as conn:
+                conn.execute("UPDATE users SET captcha_da_xac_minh=0 WHERE id=?", (user_id,))
+            await query.answer("🔄 Đã reset CAPTCHA.")
+            await _admin_hien_thi_nguoi(query, user_id)
+            return
+
+        context.user_data["admin_user_action"] = action
+        prompts = {
+            "cong": "💰 Nhập số tiền muốn CỘNG cho người dùng (ví dụ: 50000):",
+            "tru": "💸 Nhập số tiền muốn TRỪ cho người dùng (ví dụ: 50000):",
+            "setbal": "💵 Nhập SỐ DƯ MỚI (ví dụ: 100000):",
+            "cap": "🏆 Nhập cấp mới:\n" + "\n".join(f"• {x}" for x in CAP_BAC_CONFIG),
+        }
+        await query.message.reply_text(prompts.get(action, "Nhập giá trị:"), reply_markup=ReplyKeyboardRemove())
+        return ADMIN_SUA_NGUOI
 
     # --------------------------------------------------------
     # XÁC MINH NGƯỜI THẬT
@@ -2197,9 +2343,6 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
         except Exception as exc:
             print("SEND APPROVE NOTICE ERROR:", repr(exc))
 
-        # Thông báo công khai trên kênh sau khi đơn đã được duyệt và trừ tiền thành công.
-        await gui_thong_bao_rut_thanh_cong(context.bot, yc)
-
         await query.edit_message_text(
             f"✅ Đã duyệt {h(request_id)} — Trừ {yc['so_tien']:,}đ."
         )
@@ -2371,11 +2514,6 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                 pass
 
         for yc in approved_withdrawals:
-            try:
-                await gui_thong_bao_rut_thanh_cong(context.bot, yc)
-            except Exception:
-                LOGGER.exception("Lỗi đăng thông báo rút tiền hàng loạt")
-
             try:
                 await context.bot.send_message(
                     chat_id=yc["user_id"],
@@ -2567,20 +2705,72 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
             )
             return
 
-        text = f"👥 <b>NGƯỜI DÙNG ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        text = f"👥 <b>NGƯỜI DÙNG ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━━━\nChọn một người để chỉnh sửa:\n"
+        buttons = []
         for u in rows[:50]:
-            xac = "✅ Đã XM" if u.get("xac_minh_nguoi_that", 0) else "🔒 Chưa XM"
-            text += (
-                f"🆔 <code>{u['id']}</code> — {h(u['ten'])}\n"
-                f"💰 {u['so_du']:,}đ | 🏆 {h(u['cap_bac'])} | {xac}\n\n"
-            )
+            ten = (u["ten"] or "Không tên")[:25]
+            buttons.append([InlineKeyboardButton(
+                f"👤 {ten} | {u['id']}", callback_data=f"admin_user:{u['id']}"
+            )])
         if len(rows) > 50:
-            text += f"⚠️ Hiển thị 50/{len(rows)} người dùng.\n"
+            text += f"\n⚠️ Hiển thị 50/{len(rows)} người dùng.\n"
+        buttons.append([InlineKeyboardButton("⬅️ Quay lại Admin", callback_data="admin_home")])
         await query.message.reply_text(
-            text, parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại Admin", callback_data="admin_home")]])
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons)
         )
         return
+
+
+async def admin_xu_ly_sua_nguoi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    user_id = context.user_data.get("admin_user_id")
+    action = context.user_data.get("admin_user_action")
+    if not user_id or not action:
+        return ConversationHandler.END
+
+    raw = (update.effective_message.text or "").strip()
+    u = get_user(user_id)
+    if not u:
+        await update.effective_message.reply_text("❌ Không tìm thấy người dùng.")
+        return ConversationHandler.END
+
+    try:
+        if action == "cong":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount <= 0: raise ValueError
+            update_balance(user_id, amount)
+            msg = f"✅ Đã cộng {amount:,}đ cho <code>{user_id}</code>."
+        elif action == "tru":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount <= 0: raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET so_du = MAX(0, so_du - ?) WHERE id=?", (amount, user_id))
+            msg = f"✅ Đã trừ {amount:,}đ của <code>{user_id}</code>."
+        elif action == "setbal":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount < 0: raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET so_du=? WHERE id=?", (amount, user_id))
+            msg = f"✅ Đã đặt số dư thành {amount:,}đ cho <code>{user_id}</code>."
+        elif action == "cap":
+            if raw not in CAP_BAC_CONFIG:
+                raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET cap_bac=? WHERE id=?", (raw, user_id))
+            msg = f"✅ Đã đổi cấp của <code>{user_id}</code> thành <b>{h(raw)}</b>."
+        else:
+            raise ValueError
+    except ValueError:
+        await update.effective_message.reply_text("❌ Giá trị không hợp lệ. Vui lòng nhập lại.")
+        return ADMIN_SUA_NGUOI
+
+    context.user_data.pop("admin_user_action", None)
+    await update.effective_message.reply_text(
+        msg, parse_mode="HTML", reply_markup=menu_chinh(ADMIN_ID)
+    )
+    return ConversationHandler.END
 
 
 async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2820,7 +3010,7 @@ def build_application():
         entry_points=[
             CallbackQueryHandler(
                 xu_ly_admin_callback,
-                pattern=r"^admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb)$",
+                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb)|admin_user:\d+|admin_edit:(cong|tru|setbal|cap|verify|unverify|captcha):\d+)$",
             ),
         ],
         states={
@@ -2840,6 +3030,12 @@ def build_application():
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_cong_tru,
+                ),
+            ],
+            ADMIN_SUA_NGUOI: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_sua_nguoi,
                 ),
             ],
             ADMIN_GUI_TB: [
@@ -2900,6 +3096,15 @@ def build_application():
         CallbackQueryHandler(
             kiem_tra_kenh_callback,
             pattern=r"^kiem_tra_kenh$",
+        ),
+        group=0,
+    )
+
+    # Tự xử lý yêu cầu tham gia kênh bằng BOT.
+    # Bot phải là ADMIN của kênh và có quyền duyệt yêu cầu tham gia.
+    app.add_handler(
+        ChatJoinRequestHandler(
+            xu_ly_yeu_cau_tham_gia_kenh,
         ),
         group=0,
     )
