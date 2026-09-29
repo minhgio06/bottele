@@ -198,6 +198,7 @@ ADMIN_GUI_TB = 12
 ADMIN_CONG_TAT_CA = 13
 ADMIN_SUA_NGUOI = 14
 ADMIN_TIM_NGUOI = 15
+ADMIN_VIDEO_ADD = 16
 NAP_GUI_ANH = 20
 XAC_MINH_GUI_ANH = 21
 
@@ -418,6 +419,14 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'pending',
                 photo_file_id TEXT,
                 phuong_thuc TEXT NOT NULL DEFAULT 'nap_30000'
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS video_links (
+                id INTEGER PRIMARY KEY,
+                url TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
             )
         """)
 
@@ -893,6 +902,15 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u["dang_xem"] = True
     save_user(u)
 
+    video_link = LINK_VIDEO
+    try:
+        with db() as conn:
+            video_rows = conn.execute("SELECT url FROM video_links ORDER BY RANDOM() LIMIT 1").fetchall()
+        if video_rows:
+            video_link = video_rows[0]["url"]
+    except Exception:
+        LOGGER.exception("Không lấy được danh sách video, dùng LINK_VIDEO mặc định")
+
     msg = await update.message.reply_text(
         f"""🔍 XEM TIKTOK — {h(u['cap_bac'])}
 
@@ -904,7 +922,7 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⌛ Sau 15 giây nút nhận thưởng sẽ xuất hiện.""",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=LINK_VIDEO)]]
+            [[InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=video_link)]]
         ),
     )
 
@@ -2071,6 +2089,7 @@ async def _admin_dashboard_content():
             InlineKeyboardButton("💰 Cộng TẤT CẢ", callback_data="admin_cong_tat_ca"),
             InlineKeyboardButton("📢 Thông báo", callback_data="admin_gui_tb"),
         ],
+        [InlineKeyboardButton("🎬 Quản lý Video", callback_data="admin_video")],
         [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
         [InlineKeyboardButton("🔄 Làm mới", callback_data="admin_refresh")],
     ])
@@ -2130,10 +2149,19 @@ def _admin_user_detail_keyboard(user_id):
             InlineKeyboardButton("🏆 Đổi cấp", callback_data=f"admin_edit:cap:{user_id}"),
         ],
         [
+            InlineKeyboardButton("✏️ Sửa tên", callback_data=f"admin_edit:name:{user_id}"),
+            InlineKeyboardButton("🏦 Sửa tài khoản", callback_data=f"admin_edit:account:{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("👥 Sửa giới thiệu", callback_data=f"admin_edit:gioithieu:{user_id}"),
+            InlineKeyboardButton("🎬 Sửa video", callback_data=f"admin_edit:video:{user_id}"),
+        ],
+        [
             InlineKeyboardButton("🛡 Xác minh", callback_data=f"admin_edit:verify:{user_id}"),
             InlineKeyboardButton("🔓 Bỏ xác minh", callback_data=f"admin_edit:unverify:{user_id}"),
         ],
         [InlineKeyboardButton("🔄 Reset CAPTCHA", callback_data=f"admin_edit:captcha:{user_id}")],
+        [InlineKeyboardButton("♻️ RESET TÀI KHOẢN", callback_data=f"admin_edit:reset:{user_id}")],
         [InlineKeyboardButton("⬅️ Danh sách người dùng", callback_data="admin_ds_nguoi")],
     ])
 
@@ -2169,6 +2197,30 @@ async def _admin_hien_thi_nguoi(query, user_id):
     )
 
 
+def _admin_video_keyboard(rows=None):
+    buttons = [
+        [InlineKeyboardButton("➕ Thêm video", callback_data="admin_video_add")],
+        [InlineKeyboardButton("📋 Danh sách video", callback_data="admin_video_list")],
+    ]
+    if rows:
+        for row in rows[:30]:
+            buttons.append([InlineKeyboardButton(f"🗑 Xóa video #{row['id']}", callback_data=f"admin_video_del:{row['id']}")])
+    buttons.append([InlineKeyboardButton("⬅️ Quay lại Admin", callback_data="admin_home")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def _admin_video_list_message(query):
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM video_links ORDER BY id DESC LIMIT 100").fetchall()
+    if not rows:
+        text = "🎬 <b>QUẢN LÝ VIDEO</b>\n━━━━━━━━━━━━━━━━━━━━\n\nChưa có video nào.\n\n➕ Hãy thêm link TikTok để hệ thống chọn ngẫu nhiên cho người dùng."
+    else:
+        text = f"🎬 <b>QUẢN LÝ VIDEO</b>\n━━━━━━━━━━━━━━━━━━━━\nTổng: <b>{len(rows)}</b> video\n\n"
+        for row in rows:
+            text += f"🎬 <b>#{row['id']}</b> — <code>{h(row['url'])}</code>\n"
+    await query.message.reply_text(text, parse_mode="HTML", reply_markup=_admin_video_keyboard(rows))
+
+
 async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
@@ -2177,6 +2229,37 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     data = query.data
+
+
+    if data == "admin_video":
+        await query.answer()
+        await _admin_video_list_message(query)
+        return
+
+    if data == "admin_video_list":
+        await query.answer()
+        await _admin_video_list_message(query)
+        return
+
+    if data == "admin_video_add":
+        await query.answer()
+        await query.message.reply_text(
+            "➕ <b>THÊM VIDEO TIKTOK</b>\n\nGửi link TikTok cần thêm.\nVí dụ: <code>https://vt.tiktok.com/...</code>",
+            parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
+        )
+        return ADMIN_VIDEO_ADD
+
+    if data.startswith("admin_video_del:"):
+        try:
+            video_id = int(data.split(":", 1)[1])
+        except ValueError:
+            await query.answer("❌ ID video không hợp lệ.", show_alert=True)
+            return
+        with db() as conn:
+            deleted = conn.execute("DELETE FROM video_links WHERE id=?", (video_id,)).rowcount
+        await query.answer("🗑 Đã xóa video." if deleted else "❌ Không tìm thấy video.", show_alert=True)
+        await _admin_video_list_message(query)
+        return
 
     # --------------------------------------------------------
     # TÌM KIẾM NGƯỜI DÙNG
@@ -2232,11 +2315,28 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.answer("🔓 Đã bỏ xác minh.")
             await _admin_hien_thi_nguoi(query, user_id)
             return
+        if action in {"name", "account", "gioithieu", "video"}:
+            context.user_data["admin_user_action"] = action
+
         if action == "captcha":
             with db() as conn:
                 conn.execute("UPDATE users SET captcha_da_xac_minh=0 WHERE id=?", (user_id,))
             await query.answer("🔄 Đã reset CAPTCHA.")
             await _admin_hien_thi_nguoi(query, user_id)
+            return
+
+        if action == "reset":
+            await query.answer("⚠️ Xác nhận reset tài khoản.", show_alert=True)
+            await query.message.reply_text(
+                f"⚠️ <b>RESET TÀI KHOẢN</b>\n\n🆔 <code>{user_id}</code>\n\n"
+                "Thao tác sẽ đưa số dư, cấp, video, giới thiệu, CAPTCHA, xác minh và tài khoản rút về mặc định.\n"
+                "Tên, ID và mã giới thiệu gốc được giữ lại.\n\nBạn có chắc chắn?",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Xác nhận reset", callback_data=f"admin_reset_confirm:{user_id}")],
+                    [InlineKeyboardButton("❌ Hủy", callback_data=f"admin_user:{user_id}")],
+                ]),
+            )
             return
 
         context.user_data["admin_user_action"] = action
@@ -2245,9 +2345,33 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             "tru": "💸 Nhập số tiền muốn TRỪ cho người dùng (ví dụ: 50000):",
             "setbal": "💵 Nhập SỐ DƯ MỚI (ví dụ: 100000):",
             "cap": "🏆 Nhập cấp mới:\n" + "\n".join(f"• {x}" for x in CAP_BAC_CONFIG),
+            "name": "✏️ Nhập tên mới của người dùng:",
+            "account": "🏦 Nhập tài khoản rút tiền mới (hoặc nhập - để xóa):",
+            "gioithieu": "👥 Nhập số người đã giới thiệu mới (số nguyên >= 0):",
+            "video": "🎬 Nhập số video đã xem mới (số nguyên >= 0):",
         }
         await query.message.reply_text(prompts.get(action, "Nhập giá trị:"), reply_markup=ReplyKeyboardRemove())
         return ADMIN_SUA_NGUOI
+
+    if data.startswith("admin_reset_confirm:"):
+        try:
+            user_id = int(data.split(":", 1)[1])
+        except ValueError:
+            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            return
+        if not get_user(user_id):
+            await query.answer("❌ Không tìm thấy người dùng.", show_alert=True)
+            return
+        with db() as conn:
+            conn.execute(
+                """UPDATE users SET cap_bac=?, so_du=0, video_da_xem=0, video_ngay=0,
+                gioi_thieu=0, captcha_da_xac_minh=0, dang_xem=0, tai_khoan=NULL,
+                xac_minh_nguoi_that=0, ngay_reset=? WHERE id=?""",
+                ("Thành viên", today_vn(), user_id),
+            )
+        await query.answer("♻️ Đã reset tài khoản.", show_alert=True)
+        await _admin_hien_thi_nguoi(query, user_id)
+        return
 
     # --------------------------------------------------------
     # XÁC MINH NGƯỜI THẬT
@@ -3002,6 +3126,26 @@ async def admin_xu_ly_tim_nguoi(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
+async def admin_xu_ly_them_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    url = (update.effective_message.text or "").strip()
+    if not (url.startswith("https://") and ("tiktok.com" in url.lower() or "vt.tiktok.com" in url.lower())):
+        await update.effective_message.reply_text("❌ Link không hợp lệ. Hãy gửi link TikTok bắt đầu bằng https://")
+        return ADMIN_VIDEO_ADD
+    try:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO video_links (url, created_at) VALUES (?, ?)",
+                (url, now_vn().strftime("%d/%m/%Y %H:%M")),
+            )
+        msg = "✅ Đã thêm video TikTok thành công."
+    except Exception:
+        msg = "⚠️ Video này đã có trong danh sách hoặc không thể thêm."
+    await update.effective_message.reply_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎬 Quản lý Video", callback_data="admin_video")]]))
+    return ConversationHandler.END
+
+
 async def admin_xu_ly_sua_nguoi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
@@ -3041,6 +3185,33 @@ async def admin_xu_ly_sua_nguoi(update: Update, context: ContextTypes.DEFAULT_TY
             with db() as conn:
                 conn.execute("UPDATE users SET cap_bac=? WHERE id=?", (raw, user_id))
             msg = f"✅ Đã đổi cấp của <code>{user_id}</code> thành <b>{h(raw)}</b>."
+        elif action == "name":
+            if not raw or len(raw) > 100:
+                raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET ten=? WHERE id=?", (raw, user_id))
+            msg = f"✅ Đã đổi tên người dùng <code>{user_id}</code> thành <b>{h(raw)}</b>."
+        elif action == "account":
+            value = None if raw == "-" else raw
+            if value is not None and len(value) > 200:
+                raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET tai_khoan=? WHERE id=?", (value, user_id))
+            msg = f"✅ Đã {'xóa' if value is None else 'đổi'} tài khoản rút tiền của <code>{user_id}</code>."
+        elif action == "gioithieu":
+            value = int(raw.replace(",", "").replace(".", ""))
+            if value < 0:
+                raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET gioi_thieu=? WHERE id=?", (value, user_id))
+            msg = f"✅ Đã đặt số người giới thiệu của <code>{user_id}</code> thành <b>{value}</b>."
+        elif action == "video":
+            value = int(raw.replace(",", "").replace(".", ""))
+            if value < 0:
+                raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET video_da_xem=? WHERE id=?", (value, user_id))
+            msg = f"✅ Đã đặt số video đã xem của <code>{user_id}</code> thành <b>{value}</b>."
         else:
             raise ValueError
     except ValueError:
@@ -3291,7 +3462,7 @@ def build_application():
         entry_points=[
             CallbackQueryHandler(
                 xu_ly_admin_callback,
-                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all)|admin_user:\d+|admin_edit:(cong|tru|setbal|cap|verify|unverify|captcha):\d+)$",
+                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all|video|video_list|video_add)|admin_user:\d+|admin_reset_confirm:\d+|admin_edit:(cong|tru|setbal|cap|verify|unverify|captcha|reset|name|account|gioithieu|video):\d+|admin_video_del:\d+)$",
             ),
         ],
         states={
@@ -3323,6 +3494,12 @@ def build_application():
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_tim_nguoi,
+                ),
+            ],
+            ADMIN_VIDEO_ADD: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    admin_xu_ly_them_video,
                 ),
             ],
             ADMIN_GUI_TB: [
