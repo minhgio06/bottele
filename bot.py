@@ -3376,7 +3376,7 @@ if __name__ == "__main__":
         init_db()
         backend = "Neon PostgreSQL" if DATABASE_URL else f"SQLite ({DB_FILE})"
         LOGGER.info("Database backend: %s", backend)
-        asyncio.run(run_bot())
+        run_bot()
 
     except KeyboardInterrupt:
         print("Bot đã dừng.")
