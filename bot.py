@@ -13,13 +13,11 @@ import signal
 import uuid
 import threading
 import io
-import csv
-import zipfile
 import random
 import string
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -202,26 +200,65 @@ ADMIN_CONG_TAT_CA = 13
 ADMIN_SUA_NGUOI = 14
 ADMIN_TIM_NGUOI = 15
 ADMIN_VIDEO_ADD = 16
-ADMIN_TAO_MA = 17
 NAP_GUI_ANH = 20
 XAC_MINH_GUI_ANH = 21
 
 CAP_BAC_CONFIG = {
     "Thành viên": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 2, "thuong_gioi_thieu": 100},
-    "Leader Bạc": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 5, "thuong_gioi_thieu": 200},
-    "Leader Vàng": {"xu_moi_video": 3000, "gioi_han_xem_ngay": 10, "thuong_gioi_thieu": 300},
-    "Leader Bạch Kim": {"xu_moi_video": 3500, "gioi_han_xem_ngay": 20, "thuong_gioi_thieu": 500},
-    "Leader Kim Cương": {"xu_moi_video": 6000, "gioi_han_xem_ngay": 30, "thuong_gioi_thieu": 1000},
-    "Leader Cao Thủ": {"xu_moi_video": 8000, "gioi_han_xem_ngay": 50, "thuong_gioi_thieu": 3000},
+    "Tân Binh": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 3, "thuong_gioi_thieu": 120},
+    "Leader Đồng": {"xu_moi_video": 2500, "gioi_han_xem_ngay": 4, "thuong_gioi_thieu": 150},
+    "Leader Đồng+": {"xu_moi_video": 2750, "gioi_han_xem_ngay": 5, "thuong_gioi_thieu": 175},
+    "Leader Bạc": {"xu_moi_video": 3000, "gioi_han_xem_ngay": 6, "thuong_gioi_thieu": 200},
+    "Leader Bạc+": {"xu_moi_video": 3250, "gioi_han_xem_ngay": 7, "thuong_gioi_thieu": 250},
+    "Leader Vàng": {"xu_moi_video": 3500, "gioi_han_xem_ngay": 9, "thuong_gioi_thieu": 300},
+    "Leader Vàng+": {"xu_moi_video": 3750, "gioi_han_xem_ngay": 11, "thuong_gioi_thieu": 400},
+    "Leader Bạch Kim": {"xu_moi_video": 4000, "gioi_han_xem_ngay": 14, "thuong_gioi_thieu": 500},
+    "Leader Bạch Kim+": {"xu_moi_video": 4250, "gioi_han_xem_ngay": 17, "thuong_gioi_thieu": 600},
+    "Leader Ruby": {"xu_moi_video": 4500, "gioi_han_xem_ngay": 20, "thuong_gioi_thieu": 700},
+    "Leader Ruby+": {"xu_moi_video": 4750, "gioi_han_xem_ngay": 24, "thuong_gioi_thieu": 800},
+    "Leader Sapphire": {"xu_moi_video": 5000, "gioi_han_xem_ngay": 28, "thuong_gioi_thieu": 900},
+    "Leader Sapphire+": {"xu_moi_video": 5500, "gioi_han_xem_ngay": 34, "thuong_gioi_thieu": 1050},
+    "Leader Kim Cương": {"xu_moi_video": 6000, "gioi_han_xem_ngay": 40, "thuong_gioi_thieu": 1200},
+    "Leader Kim Cương+": {"xu_moi_video": 6500, "gioi_han_xem_ngay": 46, "thuong_gioi_thieu": 1400},
+    "Leader Titan": {"xu_moi_video": 7000, "gioi_han_xem_ngay": 55, "thuong_gioi_thieu": 1600},
+    "Leader Titan+": {"xu_moi_video": 7500, "gioi_han_xem_ngay": 65, "thuong_gioi_thieu": 1900},
+    "Leader Cao Thủ": {"xu_moi_video": 8000, "gioi_han_xem_ngay": 75, "thuong_gioi_thieu": 2200},
+    "Leader Cao Thủ+": {"xu_moi_video": 9000, "gioi_han_xem_ngay": 85, "thuong_gioi_thieu": 2600},
+    "Leader Đại Cao Thủ": {"xu_moi_video": 10000, "gioi_han_xem_ngay": 100, "thuong_gioi_thieu": 3000},
+    "Leader Đại Cao Thủ+": {"xu_moi_video": 11000, "gioi_han_xem_ngay": 120, "thuong_gioi_thieu": 3500},
+    "Leader Huyền Thoại": {"xu_moi_video": 12000, "gioi_han_xem_ngay": 150, "thuong_gioi_thieu": 5000},
+    "Leader Bất Diệt": {"xu_moi_video": 14000, "gioi_han_xem_ngay": 180, "thuong_gioi_thieu": 6500},
+    "Leader Tối Thượng": {"xu_moi_video": 16000, "gioi_han_xem_ngay": 220, "thuong_gioi_thieu": 8000},
+    "Leader Thần Thoại": {"xu_moi_video": 20000, "gioi_han_xem_ngay": 300, "thuong_gioi_thieu": 10000},
 }
 
 MOC_CAP = [
-    ("Thành viên", 0, 29),
-    ("Leader Bạc", 30, 99),
-    ("Leader Vàng", 100, 299),
-    ("Leader Bạch Kim", 300, 499),
-    ("Leader Kim Cương", 500, 999),
-    ("Leader Cao Thủ", 1000, 999999),
+    ("Thành viên", 0, 4),
+    ("Tân Binh", 5, 9),
+    ("Leader Đồng", 10, 19),
+    ("Leader Đồng+", 20, 29),
+    ("Leader Bạc", 30, 59),
+    ("Leader Bạc+", 60, 79),
+    ("Leader Vàng", 80, 119),
+    ("Leader Vàng+", 120, 149),
+    ("Leader Bạch Kim", 150, 249),
+    ("Leader Bạch Kim+", 250, 299),
+    ("Leader Ruby", 300, 399),
+    ("Leader Ruby+", 400, 499),
+    ("Leader Sapphire", 500, 649),
+    ("Leader Sapphire+", 650, 799),
+    ("Leader Kim Cương", 800, 999),
+    ("Leader Kim Cương+", 1000, 1199),
+    ("Leader Titan", 1200, 1499),
+    ("Leader Titan+", 1500, 1999),
+    ("Leader Cao Thủ", 2000, 2499),
+    ("Leader Cao Thủ+", 2500, 2999),
+    ("Leader Đại Cao Thủ", 3000, 3999),
+    ("Leader Đại Cao Thủ+", 4000, 4999),
+    ("Leader Huyền Thoại", 5000, 9999),
+    ("Leader Bất Diệt", 10000, 19999),
+    ("Leader Tối Thượng", 20000, 49999),
+    ("Leader Thần Thoại", 50000, 999999999),
 ]
 
 GOI_NANG_CAP = {
@@ -484,79 +521,14 @@ def init_db():
                 value TEXT NOT NULL
             )
         """)
-
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS user_rewards (
+            CREATE TABLE IF NOT EXISTS daily_checkins (
                 user_id BIGINT PRIMARY KEY,
-                last_checkin TEXT,
-                streak INTEGER NOT NULL DEFAULT 0
+                last_date TEXT NOT NULL,
+                streak INTEGER NOT NULL DEFAULT 0,
+                total_days INTEGER NOT NULL DEFAULT 0
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bonus_codes (
-                code TEXT PRIMARY KEY,
-                amount BIGINT NOT NULL,
-                max_uses INTEGER NOT NULL DEFAULT 1,
-                used_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bonus_claims (
-                code TEXT NOT NULL,
-                user_id BIGINT NOT NULL,
-                claimed_at TEXT NOT NULL,
-                PRIMARY KEY(code, user_id)
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS task_claims (
-                user_id BIGINT NOT NULL,
-                task_key TEXT NOT NULL,
-                claim_date TEXT NOT NULL,
-                amount BIGINT NOT NULL,
-                PRIMARY KEY(user_id, task_key, claim_date)
-            )
-        """)
-        _auto_id = "BIGSERIAL" if DATABASE_URL else "INTEGER"
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS fraud_flags (
-                id {_auto_id} PRIMARY KEY, user_id BIGINT NOT NULL, flag TEXT NOT NULL,
-                detail TEXT, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL
-            )
-        """)
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS video_views (
-                id {_auto_id} PRIMARY KEY, video_id INTEGER, user_id BIGINT NOT NULL,
-                watched_at TEXT NOT NULL, reward BIGINT NOT NULL DEFAULT 0
-            )
-        """)
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS scheduled_notifications (
-                id {_auto_id} PRIMARY KEY, target TEXT NOT NULL DEFAULT 'all', content TEXT NOT NULL,
-                send_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
-            )
-        """)
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS events (
-                id {_auto_id} PRIMARY KEY, name TEXT NOT NULL, amount BIGINT NOT NULL DEFAULT 0,
-                start_at TEXT NOT NULL, end_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
-            )
-        """)
-        if DATABASE_URL:
-            # Neon/Postgres: đảm bảo bảng video cũ có ID tự tăng.
-            # SAVEPOINT prevents a harmless migration error from aborting the whole transaction.
-            try:
-                conn.execute("SAVEPOINT video_identity_migration")
-                conn.execute("ALTER TABLE video_links ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY")
-                conn.execute("RELEASE SAVEPOINT video_identity_migration")
-            except Exception:
-                try:
-                    conn.execute("ROLLBACK TO SAVEPOINT video_identity_migration")
-                    conn.execute("RELEASE SAVEPOINT video_identity_migration")
-                except Exception:
-                    pass
 
         # Schema migration an toàn cho database cũ.
         if DATABASE_URL:
@@ -746,17 +718,6 @@ def init_user(user_id, ten, ref_by=None, username=None):
             ),
         )
 
-    # Thưởng người mới cấu hình được trong Admin/system_settings.
-    try:
-        bonus = int(get_setting("new_user_bonus", 0))
-        if bonus > 0:
-            with db() as conn:
-                conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?", (bonus, user_id))
-                bal = conn.execute("SELECT so_du FROM users WHERE id=?", (user_id,)).fetchone()[0]
-            record_balance_change(user_id, None, bonus, bal, "Thưởng người dùng mới")
-    except Exception:
-        LOGGER.exception("Không cấp được thưởng người mới")
-
     if ref_by:
         ref = get_user(ref_by)
         if ref:
@@ -845,9 +806,8 @@ def menu_chinh(user_id=None):
     rows = [
         [KeyboardButton("👤 Hồ Sơ"), KeyboardButton("🔍 Xem TikTok")],
         [KeyboardButton("👥 Cấp Giới Thiệu"), KeyboardButton("👑 Nâng Cấp Bậc")],
+        [KeyboardButton("🎁 Điểm Danh"), KeyboardButton("🏆 BXH")],
         [KeyboardButton("🎧 Hỗ Trợ"), KeyboardButton("🔐 Nhập CaptCha")],
-        [KeyboardButton("🎁 Nhiệm Vụ"), KeyboardButton("🏆 BXH")],
-        [KeyboardButton("🎡 Vòng Quay"), KeyboardButton("📜 Lịch Sử")],
         [KeyboardButton("💰 Rút Tiền")],
     ]
     if user_id == ADMIN_ID:
@@ -1101,12 +1061,10 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(u)
 
     video_link = LINK_VIDEO
-    video_id = None
     try:
         with db() as conn:
-            video_rows = conn.execute("SELECT id, url FROM video_links ORDER BY RANDOM() LIMIT 1").fetchall()
+            video_rows = conn.execute("SELECT url FROM video_links ORDER BY RANDOM() LIMIT 1").fetchall()
         if video_rows:
-            video_id = video_rows[0]["id"]
             video_link = video_rows[0]["url"]
     except Exception:
         LOGGER.exception("Không lấy được danh sách video, dùng LINK_VIDEO mặc định")
@@ -1127,7 +1085,6 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     context.user_data["watch_message_id"] = msg.message_id
-    context.user_data["watch_video_id"] = video_id
 
     await asyncio.sleep(15)
 
@@ -1239,10 +1196,7 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         conn.commit()
 
-    await v2_video_record(uid, context.user_data.get("watch_video_id"), tien)
     context.user_data.pop("watch_message_id", None)
-    context.user_data.pop("watch_video_id", None)
-    await v2_auto_rank(uid)
     await query.answer("✅ Đã cộng thưởng!", show_alert=False)
     await query.edit_message_text(
         f"""✅ <b>NHẬN THƯỞNG THÀNH CÔNG</b>
@@ -1257,136 +1211,45 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def diem_danh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = get_user(update.effective_user.id)
-    if not u:
-        await update.message.reply_text("Vui lòng gõ /start trước.")
-        return
-    today = today_vn()
+    if not u: return
+    today = today_vn(); yesterday = (now_vn() - timedelta(days=1)).strftime("%d/%m/%Y")
+    base = int(get_setting("thuong_diem_danh", 5000))
     with db() as conn:
-        row = conn.execute("SELECT * FROM user_rewards WHERE user_id=?", (u["id"],)).fetchone()
-        if row and row["last_checkin"] == today:
-            await update.message.reply_text(
-                f"🎁 <b>ĐÃ ĐIỂM DANH HÔM NAY</b>\n\n🔥 Chuỗi hiện tại: <b>{row['streak']}</b> ngày",
-                parse_mode="HTML", reply_markup=menu_chinh(u["id"]))
+        row = conn.execute("SELECT * FROM daily_checkins WHERE user_id=?", (u["id"],)).fetchone()
+        if row and row["last_date"] == today:
+            await update.message.reply_text(f"✅ Hôm nay bạn đã điểm danh rồi.\n🔥 Chuỗi: <b>{row['streak']}</b> ngày", parse_mode="HTML", reply_markup=menu_chinh(u["id"]))
             return
-        streak = int(row["streak"] or 0) + 1 if row else 1
-        # Chuỗi 7 ngày nhận thêm, nhưng mỗi ngày đều có thưởng.
-        amount = 2_000 + min(streak, 7) * 500
-        conn.execute("""INSERT INTO user_rewards(user_id,last_checkin,streak) VALUES(?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET last_checkin=excluded.last_checkin, streak=excluded.streak""",
-            (u["id"], today, streak))
-        conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?", (amount, u["id"]))
-        newbal = conn.execute("SELECT so_du FROM users WHERE id=?", (u["id"],)).fetchone()[0]
-    record_balance_change(u["id"], None, amount, newbal, "Điểm danh hằng ngày")
-    await update.message.reply_text(
-        f"🎉 <b>ĐIỂM DANH THÀNH CÔNG!</b>\n\n🔥 Chuỗi: <b>{streak}</b> ngày\n💰 Nhận: <b>+{amount:,}đ</b>\n💵 Số dư: <b>{newbal:,}đ</b>",
-        parse_mode="HTML", reply_markup=menu_chinh(u["id"]))
+        streak = int(row["streak"]) + 1 if row and row["last_date"] == yesterday else 1
+        bonus = base + min(streak, 7) * 1000 + (int(get_setting("thuong_tuan", 15000)) if streak % 7 == 0 else 0)
+        if row: conn.execute("UPDATE daily_checkins SET last_date=?, streak=?, total_days=total_days+1 WHERE user_id=?", (today, streak, u["id"]))
+        else: conn.execute("INSERT INTO daily_checkins (user_id,last_date,streak,total_days) VALUES (?,?,?,1)", (u["id"], today, streak))
+        conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?", (bonus, u["id"]))
+        new_balance = conn.execute("SELECT so_du FROM users WHERE id=?", (u["id"],)).fetchone()[0]
+    await update.message.reply_text(f"🎁 <b>ĐIỂM DANH THÀNH CÔNG</b>\n\n🔥 Chuỗi: <b>{streak} ngày</b>\n💰 Thưởng: <b>+{bonus:,}đ</b>\n💵 Số dư: <b>{new_balance:,}đ</b>", parse_mode="HTML", reply_markup=menu_chinh(u["id"]))
 
-async def nhiem_vu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = get_user(update.effective_user.id)
-    if not u:
-        return
-    today = today_vn()
-    with db() as conn:
-        claims = {r["task_key"] for r in conn.execute("SELECT task_key FROM task_claims WHERE user_id=? AND claim_date=?", (u["id"], today)).fetchall()}
-    tasks = [
-        ("checkin", "🎁 Điểm danh hôm nay", 3000, True),
-        ("watch2", "🎬 Xem đủ 2 video hôm nay", 5000, u["video_ngay"] >= 2),
-        ("ref1", "👥 Có ít nhất 1 lượt giới thiệu", 5000, u["gioi_thieu"] >= 1),
-    ]
-    text = "🎯 <b>NHIỆM VỤ HÔM NAY</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    buttons=[]
-    for key,title,amount,done in tasks:
-        claimed = key in claims
-        status = "✅ Đã nhận" if claimed else ("🟢 Hoàn thành" if done else "⚪ Chưa hoàn thành")
-        text += f"{title}\n└ {status} · +{amount:,}đ\n\n"
-        if done and not claimed and key != "checkin":
-            buttons.append([InlineKeyboardButton(f"🎁 Nhận {amount:,}đ", callback_data=f"task_claim:{key}")])
-    buttons += [[InlineKeyboardButton("🎁 Điểm danh", callback_data="user_checkin")], [InlineKeyboardButton("🎟️ Nhập mã thưởng", callback_data="bonus_redeem")]]
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def bang_xep_hang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = get_user(update.effective_user.id)
+    if not u: return
     with db() as conn:
-        rows = conn.execute("SELECT id,ten,gioi_thieu FROM users ORDER BY gioi_thieu DESC, id ASC LIMIT 10").fetchall()
-    text="🏆 <b>BẢNG XẾP HẠNG GIỚI THIỆU</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    if not rows:
-        text += "Chưa có dữ liệu."
-    else:
-        icons=["🥇","🥈","🥉"]
-        for i,r in enumerate(rows,1):
-            text += f"{icons[i-1] if i<=3 else '👤'} <b>#{i}</b> {h(r['ten'])} — <b>{r['gioi_thieu']}</b> lượt\n"
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=menu_chinh(update.effective_user.id))
+        rows = conn.execute("SELECT id, ten, gioi_thieu, cap_bac FROM users ORDER BY gioi_thieu DESC, so_du DESC LIMIT 10").fetchall()
+    text = "🏆 <b>BẢNG XẾP HẠNG GIỚI THIỆU</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    for i, r in enumerate(rows, 1):
+        icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
+        text += f"{icon} <b>#{i}</b> {h(r['ten'])} — {r['gioi_thieu']} người\n   🏆 {h(r['cap_bac'])}\n"
+    text += "\n📌 Xếp hạng dựa trên số người giới thiệu."
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=menu_chinh(u["id"]))
 
-async def lich_su_giao_dich_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    with db() as conn:
-        rows=conn.execute("SELECT * FROM balance_history WHERE user_id=? ORDER BY id DESC LIMIT 15",(uid,)).fetchall()
-        w=conn.execute("SELECT request_id,so_tien,status,thoi_gian FROM withdrawals WHERE user_id=? ORDER BY thoi_gian DESC LIMIT 10",(uid,)).fetchall()
-    text="📜 <b>LỊCH SỬ GIAO DỊCH</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-    for r in rows:
-        sign='+' if r['delta']>=0 else ''
-        text += f"\n💰 {sign}{r['delta']:,}đ · {h(r['reason'] or '')}\n🕒 {h(r['created_at'])}\n"
-    if w:
-        text += "\n💸 <b>RÚT TIỀN</b>\n"
-        for r in w:
-            text += f"\n📋 <code>{h(r['request_id'])}</code> · {r['so_tien']:,}đ · {h(r['status'])}\n"
-    if not rows and not w: text += "\nChưa có giao dịch."
-    await update.message.reply_text(text,parse_mode="HTML",reply_markup=menu_chinh(uid))
 
-async def bonus_redeem_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["await_bonus_code"] = True
-    await update.effective_message.reply_text("🎟️ Gửi <b>mã thưởng</b> của bạn:",parse_mode="HTML",reply_markup=ReplyKeyboardRemove())
+def _hien_thi_moc_cap():
+    icons = ["🌱", "🔰", "🥉", "🥉", "🥈", "🥈", "🥇", "🥇", "💎", "💎", "♦️", "♦️", "🔷", "🔷", "💠", "💠", "⚡", "⚡", "👑", "👑", "🔥", "🔥", "🌟", "☄️", "🌌", "🏆"]
+    lines = []
+    for i, (ten, min_n, max_n) in enumerate(MOC_CAP):
+        moc = f"{min_n:,}+" if max_n >= 999999999 else f"{min_n:,}–{max_n:,}"
+        icon = icons[i] if i < len(icons) else "⭐"
+        lines.append(f"{icon} <b>{ten}</b> — {moc} người")
+    return "\n".join(lines)
 
-async def handle_bonus_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.pop("await_bonus_code", False): return False
-    code=(update.effective_message.text or '').strip().upper()
-    uid=update.effective_user.id
-    with db() as conn:
-        row=conn.execute("SELECT * FROM bonus_codes WHERE code=? AND active=1",(code,)).fetchone()
-        if not row:
-            await update.effective_message.reply_text("❌ Mã không tồn tại hoặc đã khóa.",reply_markup=menu_chinh(uid)); return True
-        if row['used_count']>=row['max_uses']:
-            await update.effective_message.reply_text("❌ Mã đã hết lượt sử dụng.",reply_markup=menu_chinh(uid)); return True
-        claimed=conn.execute("SELECT 1 FROM bonus_claims WHERE code=? AND user_id=?",(code,uid)).fetchone()
-        if claimed:
-            await update.effective_message.reply_text("❌ Bạn đã sử dụng mã này rồi.",reply_markup=menu_chinh(uid)); return True
-        conn.execute("INSERT INTO bonus_claims(code,user_id,claimed_at) VALUES(?,?,?)",(code,uid,now_vn().strftime('%d/%m/%Y %H:%M:%S')))
-        conn.execute("UPDATE bonus_codes SET used_count=used_count+1 WHERE code=?",(code,))
-        conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?",(row['amount'],uid))
-        bal=conn.execute("SELECT so_du FROM users WHERE id=?",(uid,)).fetchone()[0]
-    record_balance_change(uid,None,int(row['amount']),bal,f"Mã thưởng {code}")
-    await update.effective_message.reply_text(f"🎉 <b>NHẬN MÃ THƯỞNG THÀNH CÔNG</b>\n\n🎟️ Mã: <code>{h(code)}</code>\n💰 +{row['amount']:,}đ\n💵 Số dư: {bal:,}đ",parse_mode='HTML',reply_markup=menu_chinh(uid))
-    return True
-
-async def user_new_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; data=q.data; await q.answer()
-    if data=="user_checkin":
-        uid=update.effective_user.id; today=today_vn()
-        with db() as conn:
-            row=conn.execute("SELECT * FROM user_rewards WHERE user_id=?",(uid,)).fetchone()
-            if row and row["last_checkin"]==today:
-                await q.answer("❌ Hôm nay đã điểm danh.",show_alert=True); return
-            streak=(int(row["streak"] or 0)+1) if row else 1
-            amount=2000+min(streak,7)*500
-            conn.execute("INSERT INTO user_rewards(user_id,last_checkin,streak) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_checkin=excluded.last_checkin, streak=excluded.streak",(uid,today,streak))
-            conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?",(amount,uid))
-            bal=conn.execute("SELECT so_du FROM users WHERE id=?",(uid,)).fetchone()[0]
-        record_balance_change(uid,None,amount,bal,"Điểm danh hằng ngày")
-        await q.message.reply_text(f"🎉 <b>ĐIỂM DANH THÀNH CÔNG!</b>\n\n🔥 Chuỗi: <b>{streak}</b> ngày\n💰 +{amount:,}đ\n💵 Số dư: <b>{bal:,}đ</b>",parse_mode='HTML',reply_markup=menu_chinh(uid)); return
-    if data.startswith("task_claim:"):
-        key=data.split(':',1)[1]; uid=update.effective_user.id; today=today_vn()
-        rewards={'watch2':5000,'ref1':5000}
-        u=get_user(uid)
-        if key not in rewards or not u: return
-        done=(key=='watch2' and u['video_ngay']>=2) or (key=='ref1' and u['gioi_thieu']>=1)
-        with db() as conn:
-            exists=conn.execute("SELECT 1 FROM task_claims WHERE user_id=? AND task_key=? AND claim_date=?",(uid,key,today)).fetchone()
-            if exists or not done:
-                await q.answer("❌ Nhiệm vụ chưa đủ điều kiện hoặc đã nhận.",show_alert=True); return
-            amt=rewards[key]; conn.execute("INSERT INTO task_claims VALUES(?,?,?,?)",(uid,key,today,amt)); conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?",(amt,uid)); bal=conn.execute("SELECT so_du FROM users WHERE id=?",(uid,)).fetchone()[0]
-        record_balance_change(uid,None,amt,bal,f"Nhiệm vụ {key}")
-        await q.message.reply_text(f"🎉 Đã nhận +{amt:,}đ!\n💵 Số dư: {bal:,}đ",reply_markup=menu_chinh(uid))
-    elif data=="bonus_redeem":
-        await bonus_redeem_prompt(update,context)
 
 async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Khu vực riêng cho cấp giới thiệu và link giới thiệu."""
@@ -1398,20 +1261,17 @@ async def khu_vuc_leader(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{me.username}?start={u['id']}"
 
     thuong = CAP_BAC_CONFIG[u["cap_bac"]]["thuong_gioi_thieu"]
+    moc_cap_text = _hien_thi_moc_cap()
     await update.message.reply_text(
         f"""👥 <b>CẤP GIỚI THIỆU</b>
 
 👥 Người đã giới thiệu: <b>{u['gioi_thieu']}</b>
 💰 Thưởng giới thiệu hiện tại: <b>{thuong:,}đ/người</b>
 
-📈 <b>MỐC CẤP GIỚI THIỆU</b>
-👤 0–29 → Thành viên
-🥈 30–99 → Leader Bạc
-🥇 100–299 → Leader Vàng
-💎 300–499 → Leader Bạch Kim
-💠 500–999 → Leader Kim Cương
-👑 1.000+ → Leader Cao Thủ
-
+📈 <b>HỆ THỐNG 26 CẤP BẬC</b>
+━━━━━━━━━━━━━━━━━━━━
+{moc_cap_text}
+━━━━━━━━━━━━━━━━━━━━
 🔗 <b>LINK GIỚI THIỆU</b>
 <code>{link}</code>""",
         parse_mode="HTML",
@@ -2471,12 +2331,6 @@ async def _admin_dashboard_content():
         [InlineKeyboardButton("📜 Lịch sử giao dịch", callback_data="admin_lich_su")],
         [InlineKeyboardButton("🛡 Nhật ký Admin", callback_data="admin_log")],
         [InlineKeyboardButton("⚙️ Cài đặt hệ thống", callback_data="admin_settings")],
-        [InlineKeyboardButton("🛡 Anti-Fraud", callback_data="admin_antifraud"), InlineKeyboardButton("📊 Thống kê", callback_data="admin_stats")],
-        [InlineKeyboardButton("📢 Thông báo nâng cao", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("⏰ Hẹn giờ thông báo", callback_data="admin_schedule")],
-        [InlineKeyboardButton("🎁 Sự kiện", callback_data="admin_event")],
-        [InlineKeyboardButton("💾 Backup dữ liệu", callback_data="admin_backup")],
-        [InlineKeyboardButton("🎟️ Tạo mã thưởng", callback_data="admin_bonus_create"), InlineKeyboardButton("📤 Xuất User", callback_data="admin_export")],
         [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
         [InlineKeyboardButton("🔄 Làm mới", callback_data="admin_refresh")],
     ])
@@ -2620,38 +2474,6 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     data = query.data
 
-
-    if data == "admin_bonus_create":
-        await query.answer()
-        context.user_data["admin_bonus_create"] = True
-        await query.message.reply_text("🎟️ Nhập mã theo dạng: <code>CODE 10000 100</code>\n\nCODE = mã thưởng, 10000 = số tiền, 100 = số lượt tối đa.", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
-        return ADMIN_TAO_MA
-
-    if data == "admin_export":
-        import csv
-        with db() as conn:
-            rows=conn.execute("SELECT id,ten,username,cap_bac,so_du,video_da_xem,gioi_thieu,tai_khoan,bi_khoa FROM users ORDER BY id").fetchall()
-        out=io.StringIO(); w=csv.writer(out); w.writerow(["id","ten","username","cap_bac","so_du","video_da_xem","gioi_thieu","tai_khoan","bi_khoa"])
-        for r in rows: w.writerow([r[x] for x in ["id","ten","username","cap_bac","so_du","video_da_xem","gioi_thieu","tai_khoan","bi_khoa"]])
-        bio=io.BytesIO(out.getvalue().encode("utf-8-sig")); bio.name="users_export.csv"
-        await query.message.reply_document(document=bio, caption=f"📤 Xuất {len(rows)} người dùng.")
-        admin_log("Xuất danh sách user")
-        return
-
-    if data == "admin_stats":
-        await query.answer(); await v2_admin_stats(query); return
-    if data == "admin_antifraud":
-        await query.answer(); await v2_admin_antifraud(query); return
-    if data == "admin_fraud_scan":
-        await query.answer(); await v2_fraud_scan(query); return
-    if data == "admin_event":
-        await query.answer(); await v2_admin_event(query); return
-    if data == "admin_broadcast":
-        await query.answer(); return await v2_admin_broadcast(query, context)
-    if data == "admin_schedule":
-        await query.answer(); return await v2_admin_schedule(query, context)
-    if data == "admin_backup":
-        await query.answer(); await v2_admin_backup(query); return
 
     if data == "admin_video":
         await query.answer()
@@ -3614,29 +3436,6 @@ async def admin_xu_ly_tim_nguoi(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
-async def admin_xu_ly_tao_ma(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    raw=(update.effective_message.text or '').strip().split()
-    if len(raw)!=3:
-        await update.effective_message.reply_text("❌ Sai định dạng. Ví dụ: BONUS100 10000 50")
-        return ADMIN_TAO_MA
-    code=raw[0].upper()
-    try: amount=int(raw[1]); max_uses=int(raw[2])
-    except ValueError: amount=max_uses=0
-    if not code.isalnum() or amount<=0 or max_uses<=0 or len(code)>32:
-        await update.effective_message.reply_text("❌ Mã, số tiền hoặc số lượt không hợp lệ.")
-        return ADMIN_TAO_MA
-    try:
-        with db() as conn:
-            conn.execute("INSERT INTO bonus_codes(code,amount,max_uses,used_count,created_at,active) VALUES(?,?,0,?, ?,1)", (code,amount,max_uses,0,now_vn().strftime('%d/%m/%Y %H:%M:%S')))
-    except Exception:
-        await update.effective_message.reply_text("❌ Mã đã tồn tại.")
-        return ConversationHandler.END
-    admin_log("Tạo mã thưởng",None,f"{code}={amount};max={max_uses}")
-    context.user_data.pop('admin_bonus_create',None)
-    await update.effective_message.reply_text(f"✅ Đã tạo mã <code>{h(code)}</code> · {amount:,}đ · {max_uses} lượt.",parse_mode='HTML',reply_markup=menu_chinh(ADMIN_ID))
-    return ConversationHandler.END
-
 async def admin_xu_ly_them_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
@@ -3892,12 +3691,6 @@ async def admin_xu_ly_cong_tru(update: Update, context: ContextTypes.DEFAULT_TYP
 async def admin_xu_ly_gui_tb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
-    if context.user_data.get("v2_broadcast"):
-        await v2_process_broadcast(update, context)
-        return ConversationHandler.END
-    if context.user_data.get("v2_schedule"):
-        await v2_process_schedule(update, context)
-        return ConversationHandler.END
 
     noi_dung = update.effective_message.text
     thanh_cong = 0
@@ -3939,176 +3732,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# V2 FEATURE PACK: anti-fraud, stats, broadcast, wheel, events
-# ============================================================
-def _wheel_reward():
-    rewards = [500, 1000, 2000, 5000, 10000, 0]
-    odds = [35, 30, 18, 10, 5, 2]
-    return random.choices(rewards, weights=odds, k=1)[0]
-
-async def v2_vong_quay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u=get_user(update.effective_user.id)
-    if not u: return
-    price=int(get_setting("wheel_price", 1000))
-    if u["so_du"] < price:
-        await update.message.reply_text(f"❌ Vòng quay giá {price:,}đ. Số dư không đủ.", reply_markup=menu_chinh(u["id"]))
-        return
-    await update.message.reply_text(
-        f"🎡 <b>VÒNG QUAY MAY MẮN</b>\n\n💰 Phí: <b>{price:,}đ/lượt</b>\n🎁 Phần thưởng: 0đ → 10.000đ\n\nBấm quay để nhận thưởng!",
-        parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎡 QUAY NGAY", callback_data="wheel_spin")]])
-    )
-
-async def v2_wheel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    uid=update.effective_user.id; u=get_user(uid)
-    if not u: return
-    price=int(get_setting("wheel_price",1000))
-    with db() as conn:
-        row=conn.execute("SELECT so_du FROM users WHERE id=?",(uid,)).fetchone()
-        if not row or row["so_du"] < price:
-            await q.answer("❌ Không đủ số dư.",show_alert=True); return
-        reward=_wheel_reward()
-        conn.execute("UPDATE users SET so_du=so_du-?+? WHERE id=?",(price,reward,uid))
-        bal=conn.execute("SELECT so_du FROM users WHERE id=?",(uid,)).fetchone()[0]
-    record_balance_change(uid,None,reward-price,bal,"Vòng quay may mắn")
-    await q.edit_message_text(f"🎡 <b>KẾT QUẢ VÒNG QUAY</b>\n\n🎁 Bạn nhận: <b>{reward:,}đ</b>\n💸 Phí: {price:,}đ\n💵 Số dư: <b>{bal:,}đ</b>",parse_mode="HTML")
-
-async def v2_admin_stats(query):
-    with db() as conn:
-        vals={
-          "users":conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
-          "balance":conn.execute("SELECT COALESCE(SUM(so_du),0) FROM users").fetchone()[0],
-          "withdraw":conn.execute("SELECT COALESCE(SUM(so_tien),0) FROM withdrawals WHERE status='approved'").fetchone()[0],
-          "pending":conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0],
-          "locked":conn.execute("SELECT COUNT(*) FROM users WHERE bi_khoa=1").fetchone()[0],
-          "videos":conn.execute("SELECT COUNT(*) FROM video_links").fetchone()[0],
-          "views":conn.execute("SELECT COUNT(*) FROM video_views").fetchone()[0],
-        }
-    text=("📊 <b>THỐNG KÊ HỆ THỐNG</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-          f"👥 Người dùng: <b>{vals['users']:,}</b>\n💰 Tổng số dư: <b>{vals['balance']:,}đ</b>\n"
-          f"💸 Tổng tiền đã duyệt rút: <b>{vals['withdraw']:,}đ</b>\n⏳ Đơn rút chờ: <b>{vals['pending']}</b>\n"
-          f"🔒 Tài khoản khóa: <b>{vals['locked']}</b>\n🎬 Video: <b>{vals['videos']}</b>\n👁 Lượt xem ghi nhận: <b>{vals['views']}</b>")
-    await query.message.reply_text(text,parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin",callback_data="admin_home")]]))
-
-async def v2_admin_antifraud(query):
-    with db() as conn:
-        rows=conn.execute("SELECT user_id,flag,detail,created_at FROM fraud_flags WHERE status='open' ORDER BY id DESC LIMIT 30").fetchall()
-    text="🛡 <b>ANTI-FRAUD</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-    if not rows: text+="✅ Chưa có cảnh báo đang mở."
-    else:
-        for r in rows: text+=f"\n🆔 <code>{r['user_id']}</code> · <b>{h(r['flag'])}</b>\n{h(r['detail'] or '')}\n🕒 {h(r['created_at'])}\n"
-    await query.message.reply_text(text,parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔍 Quét tài khoản trùng TK",callback_data="admin_fraud_scan")],[InlineKeyboardButton("⬅️ Admin",callback_data="admin_home")]]))
-
-async def v2_fraud_scan(query):
-    with db() as conn:
-        rows=conn.execute("SELECT tai_khoan, COUNT(*) c FROM users WHERE tai_khoan IS NOT NULL AND tai_khoan<>'' GROUP BY tai_khoan HAVING COUNT(*)>1 ORDER BY c DESC LIMIT 50").fetchall()
-        count=0
-        for r in rows:
-            us=conn.execute("SELECT id FROM users WHERE tai_khoan=?",(r['tai_khoan'],)).fetchall()
-            for u in us:
-                exists=conn.execute("SELECT 1 FROM fraud_flags WHERE user_id=? AND flag='TRUNG_TAI_KHOAN' AND status='open'",(u['id'],)).fetchone()
-                if not exists:
-                    conn.execute("INSERT INTO fraud_flags(user_id,flag,detail,status,created_at) VALUES(?,?,?,?,?)",(u['id'],'TRUNG_TAI_KHOAN',f"Tài khoản dùng chung: {r['tai_khoan']}",'open',now_vn().strftime('%d/%m/%Y %H:%M:%S'))); count+=1
-    await query.answer(f"🔎 Đã tạo {count} cảnh báo.",show_alert=True); await v2_admin_antifraud(query)
-
-async def v2_admin_broadcast(query, context):
-    await query.message.reply_text("📢 <b>THÔNG BÁO NÂNG CAO</b>\n\nGửi theo dạng:\n<code>ALL | nội dung</code>\n<code>CAP:Thành viên | nội dung</code>\n<code>USER:123456 | nội dung</code>",parse_mode="HTML",reply_markup=ReplyKeyboardRemove())
-    context.user_data["v2_broadcast"]=True
-    return ADMIN_GUI_TB
-
-async def v2_process_broadcast(update, context):
-    if not context.user_data.pop("v2_broadcast",False): return False
-    raw=update.effective_message.text or ""
-    if "|" not in raw:
-        await update.message.reply_text("❌ Sai định dạng."); return True
-    target,msg=[x.strip() for x in raw.split("|",1)]
-    with db() as conn:
-        if target.upper()=="ALL": rows=conn.execute("SELECT id FROM users WHERE bi_khoa=0").fetchall()
-        elif target.upper().startswith("USER:"):
-            rows=conn.execute("SELECT id FROM users WHERE id=?",(int(target.split(":",1)[1]),)).fetchall()
-        elif target.upper().startswith("CAP:"):
-            rows=conn.execute("SELECT id FROM users WHERE cap_bac=? AND bi_khoa=0",(target.split(":",1)[1],)).fetchall()
-        else: rows=[]
-    ok=0
-    for r in rows:
-        try: await context.bot.send_message(r['id'],f"📢 <b>THÔNG BÁO</b>\n\n{h(msg)}",parse_mode="HTML"); ok+=1
-        except Exception: pass
-    await update.message.reply_text(f"✅ Đã gửi {ok}/{len(rows)} người.",reply_markup=menu_chinh(ADMIN_ID)); return True
-
-async def v2_admin_event(query):
-    with db() as conn: rows=conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 20").fetchall()
-    text="🎁 <b>SỰ KIỆN</b>\n━━━━━━━━━━━━━━━━━━━━\n"+"\n".join(f"#{r['id']} {h(r['name'])} · +{r['amount']:,}đ · {h(r['start_at'])} → {h(r['end_at'])}" for r in rows)
-    await query.message.reply_text(text or "Chưa có sự kiện.",parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin",callback_data="admin_home")]]))
-
-async def v2_auto_rank(user_id):
-    u=get_user(user_id)
-    if not u:return
-    new=cap_bac_tu_so_nguoi(u.get('gioi_thieu',0))
-    if new and new!=u['cap_bac']:
-        with db() as conn: conn.execute("UPDATE users SET cap_bac=? WHERE id=?",(new,user_id))
-
-async def v2_video_record(user_id, video_id, reward):
-    try:
-        with db() as conn: conn.execute("INSERT INTO video_views(video_id,user_id,watched_at,reward) VALUES(?,?,?,?)",(video_id,user_id,now_vn().strftime('%d/%m/%Y %H:%M:%S'),reward))
-    except Exception: pass
-
-async def v2_schedule_job(context):
-    now=now_vn().strftime('%d/%m/%Y %H:%M')
-    with db() as conn: rows=conn.execute("SELECT * FROM scheduled_notifications WHERE status='pending' AND send_at<=? ORDER BY id LIMIT 10",(now,)).fetchall()
-    for r in rows:
-        with db() as conn:
-            if r['target']=='all': users=conn.execute("SELECT id FROM users WHERE bi_khoa=0").fetchall()
-            else: users=conn.execute("SELECT id FROM users WHERE cap_bac=? AND bi_khoa=0",(r['target'],)).fetchall()
-            conn.execute("UPDATE scheduled_notifications SET status='sent' WHERE id=?",(r['id'],))
-        for u in users:
-            try: await context.bot.send_message(u['id'],f"📢 <b>THÔNG BÁO</b>\n\n{h(r['content'])}",parse_mode='HTML')
-            except Exception: pass
-
-async def v2_admin_schedule(query, context):
-    context.user_data["v2_schedule"] = True
-    await query.message.reply_text("⏰ Nhập: <code>DD/MM/YYYY HH:MM | ALL</code> hoặc <code>DD/MM/YYYY HH:MM | Thành viên</code> | nội dung",parse_mode="HTML",reply_markup=ReplyKeyboardRemove())
-    return ADMIN_GUI_TB
-
-async def v2_process_schedule(update, context):
-    if not context.user_data.pop("v2_schedule",False): return False
-    raw=update.effective_message.text or ""
-    parts=[x.strip() for x in raw.split("|",2)]
-    if len(parts)!=3:
-        await update.message.reply_text("❌ Sai định dạng. Ví dụ: 30/09/2026 20:00 | ALL | Chúc mọi người buổi tối vui vẻ."); return True
-    send_at,target,msg=parts
-    try: datetime.strptime(send_at,"%d/%m/%Y %H:%M")
-    except ValueError:
-        await update.message.reply_text("❌ Sai ngày giờ."); return True
-    if target.upper()=="ALL": target="all"
-    with db() as conn:
-        conn.execute("INSERT INTO scheduled_notifications(target,content,send_at,status,created_at) VALUES(?,?,?,?,?)",(target,msg,send_at,"pending",now_vn().strftime("%d/%m/%Y %H:%M:%S")))
-    await update.message.reply_text("✅ Đã tạo lịch thông báo.",reply_markup=menu_chinh(ADMIN_ID)); return True
-
-async def v2_admin_backup(query):
-    buf=io.BytesIO()
-    with zipfile.ZipFile(buf,"w",zipfile.ZIP_DEFLATED) as z:
-        with db() as conn:
-            for table in ("users","withdrawals","deposits","verification_requests","balance_history","admin_logs","video_links"):
-                rows=conn.execute(f"SELECT * FROM {table}").fetchall()
-                cols=list(rows[0].keys()) if rows else []
-                out=io.StringIO(); w=csv.writer(out); w.writerow(cols)
-                for r in rows: w.writerow([r[c] for c in cols])
-                z.writestr(f"{table}.csv",out.getvalue())
-    buf.seek(0); buf.name=f"backup_{now_vn().strftime('%Y%m%d_%H%M%S')}.zip"
-    await query.message.reply_document(buf,caption="💾 Backup dữ liệu: users, withdrawals, deposits, verification, lịch sử số dư, log admin, video.")
-
-# ============================================================
 # MAIN
 # ============================================================
 def build_application():
     init_db()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    try:
-        if app.job_queue:
-            app.job_queue.run_repeating(v2_schedule_job, interval=60, first=10, name="scheduled_notifications")
-    except Exception:
-        LOGGER.exception("Không khởi động được lịch thông báo")
 
     # Conversation: nạp tiền
     nap_conv = ConversationHandler(
@@ -4167,7 +3796,7 @@ def build_application():
         entry_points=[
             CallbackQueryHandler(
                 xu_ly_admin_callback,
-                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all|video|video_list|video_add|lich_su|log|settings|set:(min|max|daily|cooldown)|stats|antifraud|fraud_scan|broadcast|schedule|backup|event)|admin_history:\d+|admin_bonus_create|admin_export|admin_user:\d+|admin_reset_confirm:\d+|admin_edit:(cong|tru|setbal|cap|verify|unverify|captcha|reset|name|account|gioithieu|video|lock|unlock):\d+|admin_video_del:\d+)$",
+                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all|video|video_list|video_add|lich_su|log|settings|set:(min|max|daily|cooldown))|admin_history:\d+|admin_user:\d+|admin_reset_confirm:\d+|admin_edit:(cong|tru|setbal|cap|verify|unverify|captcha|reset|name|account|gioithieu|video|lock|unlock):\d+|admin_video_del:\d+)$",
             ),
         ],
         states={
@@ -4206,9 +3835,6 @@ def build_application():
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_them_video,
                 ),
-            ],
-            ADMIN_TAO_MA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_xu_ly_tao_ma),
             ],
             ADMIN_GUI_TB: [
                 MessageHandler(
@@ -4250,7 +3876,7 @@ def build_application():
             pattern=(
                 r"^(duyet_nap_ok|duyet_nap_no|duyet_ok|duyet_no|"
                 r"xacminh_ok|xacminh_no):.+$|"
-                r"^(admin_(home|refresh|ds_(rut|nap|xacminh|nguoi)|duyet_tat_ca|bonus_create|export))$"
+                r"^(admin_(home|refresh|ds_(rut|nap|xacminh|nguoi)|duyet_tat_ca))$"
             ),
         ),
         group=1,
@@ -4329,7 +3955,6 @@ def build_application():
         ),
         group=0,
     )
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_bonus_code), group=-2)
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -4355,13 +3980,11 @@ def build_application():
     app.add_handler(
         MessageHandler(filters.Regex(r"^👑 Nâng Cấp Bậc$"), nang_cap)
     )
-    app.add_handler(MessageHandler(filters.Regex(r"^🎁 Nhiệm Vụ$"), nhiem_vu))
+    app.add_handler(MessageHandler(filters.Regex(r"^🎁 Điểm Danh$"), diem_danh))
     app.add_handler(MessageHandler(filters.Regex(r"^🏆 BXH$"), bang_xep_hang))
-    app.add_handler(MessageHandler(filters.Regex(r"^📜 Lịch Sử$"), lich_su_giao_dich_user))
-    app.add_handler(CallbackQueryHandler(user_new_callback, pattern=r"^(task_claim:.+|bonus_redeem|user_checkin)$"), group=0)
-    app.add_handler(CallbackQueryHandler(v2_wheel_callback, pattern=r"^wheel_spin$"), group=0)
-    app.add_handler(MessageHandler(filters.Regex(r"^🎡 Vòng Quay$"), v2_vong_quay))
-    app.add_handler(MessageHandler(filters.Regex(r"^🎧 Hỗ Trợ$"), ho_tro))
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^🎧 Hỗ Trợ$"), ho_tro)
+    )
     app.add_handler(
         MessageHandler(filters.Regex(r"^🔐 Nhập CaptCha$"), captcha)
     )
