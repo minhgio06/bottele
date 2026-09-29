@@ -42,7 +42,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip() 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAHz07knTOEp_gUnwcrCl6e94IK82xuLTuo").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -70,41 +70,99 @@ CAPTCHA_LENGTH = 5
 CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_FILE = os.getenv("DB_FILE", "bot_data.db")
-# Render/polling: chỉ chạy 1 instance/worker với BOT_TOKEN này.
-# Không chạy đồng thời bot.py ở máy cá nhân/VPS/Render service khác.
+# Render Webhook configuration.
+# RENDER_EXTERNAL_URL is provided by Render automatically.
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-
-# ============================================================
-# RENDER HEALTH SERVER
-# ============================================================
-# Render Web Service requires at least one listening TCP port.
-# Telegram uses long polling, so this tiny HTTP server is only
-# used for Render port detection and health checks.
 RENDER_PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/telegram/webhook").strip()
+if not WEBHOOK_PATH.startswith("/"):
+    WEBHOOK_PATH = "/" + WEBHOOK_PATH
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 
 
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b"OK"
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        return
+def get_public_webhook_url():
+    base = WEBHOOK_URL or os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if not base:
+        raise RuntimeError(
+            "Thiếu WEBHOOK_URL và RENDER_EXTERNAL_URL. Trên Render, hãy để "
+            "RENDER_EXTERNAL_URL tự cung cấp hoặc đặt WEBHOOK_URL thủ công."
+        )
+    return f"{base}{WEBHOOK_PATH}"
 
 
-def start_health_server():
-    server = ThreadingHTTPServer(("0.0.0.0", RENDER_PORT), _HealthHandler)
-    LOGGER.info("Render health server listening on 0.0.0.0:%s", RENDER_PORT)
-    server.serve_forever()
+def _make_webhook_handler(application, loop):
+    class _WebhookHandler(BaseHTTPRequestHandler):
+        def _send(self, status, body=b"OK", content_type="text/plain; charset=utf-8"):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.split("?", 1)[0] in ("/", "/health"):
+                self._send(200, b"OK")
+            else:
+                self._send(404, b"Not Found")
+
+        def do_HEAD(self):
+            if self.path.split("?", 1)[0] in ("/", "/health"):
+                self._send(200, b"")
+            else:
+                self._send(404, b"")
+
+        def do_POST(self):
+            path = self.path.split("?", 1)[0]
+            if path != WEBHOOK_PATH:
+                self._send(404, b"Not Found")
+                return
+
+            if WEBHOOK_SECRET:
+                received = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                if received != WEBHOOK_SECRET:
+                    self._send(403, b"Forbidden")
+                    return
+
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 5 * 1024 * 1024:
+                    self._send(400, b"Invalid body")
+                    return
+                raw = self.rfile.read(length)
+                data = __import__("json").loads(raw.decode("utf-8"))
+                telegram_update = Update.de_json(data, application.bot)
+                if telegram_update is None:
+                    self._send(400, b"Invalid update")
+                    return
+
+                future = asyncio.run_coroutine_threadsafe(
+                    application.update_queue.put(telegram_update), loop
+                )
+                future.result(timeout=10)
+                self._send(200, b"OK")
+            except Exception as exc:
+                LOGGER.exception("Webhook update error: %r", exc)
+                self._send(500, b"Internal Server Error")
+
+        def log_message(self, format, *args):
+            return
+
+    return _WebhookHandler
+
+
+def start_webhook_server(application, loop):
+    handler = _make_webhook_handler(application, loop)
+    server = ThreadingHTTPServer(("0.0.0.0", RENDER_PORT), handler)
+    LOGGER.info("Render webhook server listening on 0.0.0.0:%s", RENDER_PORT)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        name="render-webhook-server",
+        daemon=True,
+    )
+    thread.start()
+    return server
 
 
 # Logging production-friendly: Render sẽ giữ log để truy lỗi.
@@ -3260,45 +3318,44 @@ def build_application():
 
 async def run_bot():
     """
-    Production startup for Render.
+    Production startup for Render using Telegram Webhook.
 
-    Telegram getUpdates/polling allows only ONE active consumer for a bot
-    token. If another Render service, worker, VPS, Termux or local process
-    uses the same BOT_TOKEN, Telegram returns Conflict.
+    Render Free can sleep when there is no inbound HTTP traffic. Using a
+    webhook lets Telegram wake the Render Web Service when a user sends an
+    update, instead of relying on long polling.
     """
     application = build_application()
     await application.initialize()
 
-    # Polling and webhook are mutually exclusive.
-    try:
-        webhook_info = await application.bot.get_webhook_info()
-        if webhook_info.url:
-            print(f"Phát hiện webhook cũ: {webhook_info.url} -> đang xoá...")
-        await application.bot.delete_webhook(drop_pending_updates=False)
-    except Exception as exc:
-        print("Không thể xoá webhook cũ:", repr(exc))
-        raise
-
-    await application.start()
-
-    # Render Web Service cần một TCP port đang listen.
-    # Telegram vẫn dùng long polling như trước.
-    threading.Thread(
-        target=start_health_server,
-        name="render-health-server",
-        daemon=True,
-    ).start()
+    loop = asyncio.get_running_loop()
+    webhook_server = None
 
     try:
-        print("Đang khởi động Telegram polling...")
-        await application.updater.start_polling(
+        await application.start()
+
+        # Start our HTTP server first so Telegram has a live endpoint before
+        # the webhook is registered. /health is also available for Render.
+        webhook_server = start_webhook_server(application, loop)
+
+        public_url = get_public_webhook_url()
+        LOGGER.info("Setting Telegram webhook: %s", public_url)
+
+        await application.bot.set_webhook(
+            url=public_url,
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=False,
-            poll_interval=1.0,
+            secret_token=WEBHOOK_SECRET or None,
         )
-        print("Bot đang chạy và chờ update.")
+
+        webhook_info = await application.bot.get_webhook_info()
+        LOGGER.info(
+            "Telegram webhook active: url=%s pending=%s last_error=%s",
+            webhook_info.url,
+            webhook_info.pending_update_count,
+            webhook_info.last_error_message,
+        )
+
         stop_event = asyncio.Event()
-        loop = asyncio.get_running_loop()
 
         def request_shutdown():
             if not stop_event.is_set():
@@ -3311,27 +3368,26 @@ async def run_bot():
             except (NotImplementedError, RuntimeError):
                 pass
 
+        LOGGER.info("Bot đang chạy bằng Telegram Webhook.")
         await stop_event.wait()
 
-    except Exception as exc:
-        message = str(exc)
-        if "terminated by other getUpdates request" in message or "Conflict" in message:
-            LOGGER.error(
-                "TELEGRAM CONFLICT: BOT_TOKEN đang được một tiến trình khác "
-                "polling. Render phải chỉ có 1 worker/instance và không được "
-                "chạy cùng token ở VPS/Termux/máy cá nhân."
-            )
-        raise
-
     finally:
-        try:
-            if application.updater and application.updater.running:
-                await application.updater.stop()
-        finally:
+        if webhook_server is not None:
             try:
-                await application.stop()
-            finally:
-                await application.shutdown()
+                webhook_server.shutdown()
+                webhook_server.server_close()
+            except Exception:
+                pass
+
+        try:
+            await application.bot.delete_webhook(drop_pending_updates=False)
+        except Exception as exc:
+            LOGGER.warning("Không xoá được webhook khi shutdown: %r", exc)
+
+        try:
+            await application.stop()
+        finally:
+            await application.shutdown()
 
 
 if __name__ == "__main__":
