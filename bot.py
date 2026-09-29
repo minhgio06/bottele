@@ -137,10 +137,30 @@ def _make_webhook_handler(application, loop):
                     self._send(400, b"Invalid update")
                     return
 
-                future = asyncio.run_coroutine_threadsafe(
-                    application.update_queue.put(telegram_update), loop
+                LOGGER.info(
+                    "Webhook received update_id=%s type=%s",
+                    getattr(telegram_update, "update_id", None),
+                    (
+                        "message"
+                        if telegram_update.message
+                        else "callback_query"
+                        if telegram_update.callback_query
+                        else "other"
+                    ),
                 )
-                future.result(timeout=10)
+
+                # Process the update directly on PTB's asyncio loop.
+                # This avoids relying on the internal update queue when using
+                # our custom Render webhook server.
+                future = asyncio.run_coroutine_threadsafe(
+                    application.process_update(telegram_update),
+                    loop,
+                )
+                future.result(timeout=30)
+                LOGGER.info(
+                    "Webhook processed update_id=%s",
+                    getattr(telegram_update, "update_id", None),
+                )
                 self._send(200, b"OK")
             except Exception as exc:
                 LOGGER.exception("Webhook update error: %r", exc)
@@ -640,8 +660,8 @@ def _channel_url(value, fallback):
 
 def nut_kiem_tra_kenh():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 THAM GIA NGAY @rutxutiktok", url=_channel_url(KENH_YEU_CAU_1, "https://t.me/rutxutiktok"))],
-        [InlineKeyboardButton("📢 THAM GIA NGAY @thongbaoxutiktok", url=_channel_url(KENH_YEU_CAU_2, "https://t.me/thongbaoxutiktok"))],
+        [InlineKeyboardButton("📢 THAM GIA @rutxutiktok", url=_channel_url(KENH_YEU_CAU_1, "https://t.me/rutxutiktok"))],
+        [InlineKeyboardButton("📢 THAM GIA @thongbaoxutiktok", url=_channel_url(KENH_YEU_CAU_2, "https://t.me/thongbaoxutiktok"))],
         [InlineKeyboardButton("🔎 KIỂM TRA CẢ 2 KÊNH", callback_data="kiem_tra_kenh")],
     ])
 
