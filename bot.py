@@ -15,6 +15,8 @@ import threading
 import io
 import random
 import string
+import re
+from urllib.parse import quote
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta
@@ -207,27 +209,28 @@ ADMIN_EXT_INPUT = 31
 ADMIN_V9_BROADCAST_INPUT = 910
 ADMIN_SCHEDULE_INPUT = 32
 
+CAP_BAC_GIOI_THIEU_GIAM = True
 CAP_BAC_CONFIG = {
-    'Thành viên': {"xu_moi_video": 2500, "gioi_han_xem_ngay": 2, "thuong_gioi_thieu": 100, "icon": '🌱'},
-    'Tân Binh': {"xu_moi_video": 3000, "gioi_han_xem_ngay": 6, "thuong_gioi_thieu": 450, "icon": '🔰'},
-    'Leader Đồng I': {"xu_moi_video": 3500, "gioi_han_xem_ngay": 10, "thuong_gioi_thieu": 800, "icon": '🥉'},
-    'Leader Đồng II': {"xu_moi_video": 4000, "gioi_han_xem_ngay": 14, "thuong_gioi_thieu": 1150, "icon": '🥉'},
-    'Leader Bạc I': {"xu_moi_video": 4500, "gioi_han_xem_ngay": 18, "thuong_gioi_thieu": 1500, "icon": '🥈'},
-    'Leader Bạc II': {"xu_moi_video": 5000, "gioi_han_xem_ngay": 22, "thuong_gioi_thieu": 1850, "icon": '🥈'},
-    'Leader Vàng I': {"xu_moi_video": 5500, "gioi_han_xem_ngay": 26, "thuong_gioi_thieu": 2200, "icon": '🥇'},
-    'Leader Vàng II': {"xu_moi_video": 6000, "gioi_han_xem_ngay": 30, "thuong_gioi_thieu": 2550, "icon": '🥇'},
-    'Leader Bạch Kim I': {"xu_moi_video": 6500, "gioi_han_xem_ngay": 34, "thuong_gioi_thieu": 2900, "icon": '💎'},
-    'Leader Bạch Kim II': {"xu_moi_video": 7000, "gioi_han_xem_ngay": 38, "thuong_gioi_thieu": 3250, "icon": '💎'},
-    'Leader Ruby I': {"xu_moi_video": 7500, "gioi_han_xem_ngay": 42, "thuong_gioi_thieu": 3600, "icon": '♦️'},
-    'Leader Ruby II': {"xu_moi_video": 8000, "gioi_han_xem_ngay": 46, "thuong_gioi_thieu": 3950, "icon": '♦️'},
-    'Leader Sapphire I': {"xu_moi_video": 8500, "gioi_han_xem_ngay": 50, "thuong_gioi_thieu": 4300, "icon": '🔷'},
-    'Leader Sapphire II': {"xu_moi_video": 9000, "gioi_han_xem_ngay": 54, "thuong_gioi_thieu": 4650, "icon": '🔷'},
-    'Leader Kim Cương I': {"xu_moi_video": 9500, "gioi_han_xem_ngay": 58, "thuong_gioi_thieu": 5000, "icon": '💠'},
-    'Leader Kim Cương II': {"xu_moi_video": 10000, "gioi_han_xem_ngay": 62, "thuong_gioi_thieu": 5350, "icon": '💠'},
-    'Leader Titan I': {"xu_moi_video": 10500, "gioi_han_xem_ngay": 66, "thuong_gioi_thieu": 5700, "icon": '⚡'},
-    'Leader Titan II': {"xu_moi_video": 11000, "gioi_han_xem_ngay": 70, "thuong_gioi_thieu": 6050, "icon": '⚡'},
-    'Leader Cao Thủ I': {"xu_moi_video": 11500, "gioi_han_xem_ngay": 74, "thuong_gioi_thieu": 6400, "icon": '👑'},
-    'Leader Cao Thủ II': {"xu_moi_video": 12000, "gioi_han_xem_ngay": 78, "thuong_gioi_thieu": 6750, "icon": '👑'},
+    'Thành viên': {"xu_moi_video": 1500, "gioi_han_xem_ngay": 2, "thuong_gioi_thieu": 100, "icon": '🌱'},
+    'Tân Binh': {"xu_moi_video": 1800, "gioi_han_xem_ngay": 6, "thuong_gioi_thieu": 450, "icon": '🔰'},
+    'Leader Đồng I': {"xu_moi_video": 2200, "gioi_han_xem_ngay": 10, "thuong_gioi_thieu": 800, "icon": '🥉'},
+    'Leader Đồng II': {"xu_moi_video": 2600, "gioi_han_xem_ngay": 14, "thuong_gioi_thieu": 1150, "icon": '🥉'},
+    'Leader Bạc I': {"xu_moi_video": 3000, "gioi_han_xem_ngay": 18, "thuong_gioi_thieu": 1500, "icon": '🥈'},
+    'Leader Bạc II': {"xu_moi_video": 3400, "gioi_han_xem_ngay": 22, "thuong_gioi_thieu": 1850, "icon": '🥈'},
+    'Leader Vàng I': {"xu_moi_video": 3800, "gioi_han_xem_ngay": 26, "thuong_gioi_thieu": 2200, "icon": '🥇'},
+    'Leader Vàng II': {"xu_moi_video": 4200, "gioi_han_xem_ngay": 30, "thuong_gioi_thieu": 2550, "icon": '🥇'},
+    'Leader Bạch Kim I': {"xu_moi_video": 4600, "gioi_han_xem_ngay": 34, "thuong_gioi_thieu": 2900, "icon": '💎'},
+    'Leader Bạch Kim II': {"xu_moi_video": 5000, "gioi_han_xem_ngay": 38, "thuong_gioi_thieu": 3250, "icon": '💎'},
+    'Leader Ruby I': {"xu_moi_video": 5500, "gioi_han_xem_ngay": 42, "thuong_gioi_thieu": 3600, "icon": '♦️'},
+    'Leader Ruby II': {"xu_moi_video": 6000, "gioi_han_xem_ngay": 46, "thuong_gioi_thieu": 3950, "icon": '♦️'},
+    'Leader Sapphire I': {"xu_moi_video": 6500, "gioi_han_xem_ngay": 50, "thuong_gioi_thieu": 4300, "icon": '🔷'},
+    'Leader Sapphire II': {"xu_moi_video": 7000, "gioi_han_xem_ngay": 54, "thuong_gioi_thieu": 4650, "icon": '🔷'},
+    'Leader Kim Cương I': {"xu_moi_video": 7500, "gioi_han_xem_ngay": 58, "thuong_gioi_thieu": 5000, "icon": '💠'},
+    'Leader Kim Cương II': {"xu_moi_video": 8000, "gioi_han_xem_ngay": 62, "thuong_gioi_thieu": 5350, "icon": '💠'},
+    'Leader Titan I': {"xu_moi_video": 8500, "gioi_han_xem_ngay": 66, "thuong_gioi_thieu": 5700, "icon": '⚡'},
+    'Leader Titan II': {"xu_moi_video": 9000, "gioi_han_xem_ngay": 70, "thuong_gioi_thieu": 6050, "icon": '⚡'},
+    'Leader Cao Thủ I': {"xu_moi_video": 9500, "gioi_han_xem_ngay": 74, "thuong_gioi_thieu": 6400, "icon": '👑'},
+    'Leader Cao Thủ II': {"xu_moi_video": 10000, "gioi_han_xem_ngay": 78, "thuong_gioi_thieu": 6750, "icon": '👑'},
     'Leader Đại Cao Thủ I': {"xu_moi_video": 12500, "gioi_han_xem_ngay": 82, "thuong_gioi_thieu": 7100, "icon": '🔥'},
     'Leader Đại Cao Thủ II': {"xu_moi_video": 13000, "gioi_han_xem_ngay": 86, "thuong_gioi_thieu": 7450, "icon": '🔥'},
     'Leader Đại Cao Thủ III': {"xu_moi_video": 13500, "gioi_han_xem_ngay": 90, "thuong_gioi_thieu": 7800, "icon": '🔥'},
@@ -246,41 +249,41 @@ CAP_BAC_CONFIG = {
 }
 
 MOC_CAP = [
-    ('Thành viên', 0, 4),
-    ('Tân Binh', 5, 9),
-    ('Leader Đồng I', 10, 19),
-    ('Leader Đồng II', 20, 29),
-    ('Leader Bạc I', 30, 49),
-    ('Leader Bạc II', 50, 79),
-    ('Leader Vàng I', 80, 119),
-    ('Leader Vàng II', 120, 149),
-    ('Leader Bạch Kim I', 150, 199),
-    ('Leader Bạch Kim II', 200, 299),
-    ('Leader Ruby I', 300, 399),
-    ('Leader Ruby II', 400, 499),
-    ('Leader Sapphire I', 500, 649),
-    ('Leader Sapphire II', 650, 799),
-    ('Leader Kim Cương I', 800, 999),
-    ('Leader Kim Cương II', 1000, 1199),
-    ('Leader Titan I', 1200, 1499),
-    ('Leader Titan II', 1500, 1999),
-    ('Leader Cao Thủ I', 2000, 2499),
-    ('Leader Cao Thủ II', 2500, 2999),
-    ('Leader Đại Cao Thủ I', 3000, 3499),
-    ('Leader Đại Cao Thủ II', 3500, 3999),
-    ('Leader Đại Cao Thủ III', 4000, 4999),
-    ('Leader Huyền Thoại I', 5000, 7499),
-    ('Leader Huyền Thoại II', 7500, 9999),
-    ('Leader Bất Diệt I', 10000, 14999),
-    ('Leader Bất Diệt II', 15000, 19999),
-    ('Leader Tối Thượng I', 20000, 29999),
-    ('Leader Tối Thượng II', 30000, 49999),
-    ('Leader Thần Thoại I', 50000, 74999),
-    ('Leader Thần Thoại II', 75000, 99999),
-    ('Leader Chí Tôn', 100000, 199999),
-    ('Leader Đế Vương', 200000, 499999),
-    ('Leader Thiên Đế', 500000, 999999),
-    ('Leader Thần Vương', 1000000, 999999999),
+    ('Thành viên', 0, 2),
+    ('Tân Binh', 3, 4),
+    ('Leader Đồng I', 5, 9),
+    ('Leader Đồng II', 10, 14),
+    ('Leader Bạc I', 15, 24),
+    ('Leader Bạc II', 25, 39),
+    ('Leader Vàng I', 40, 59),
+    ('Leader Vàng II', 60, 74),
+    ('Leader Bạch Kim I', 75, 99),
+    ('Leader Bạch Kim II', 100, 149),
+    ('Leader Ruby I', 150, 199),
+    ('Leader Ruby II', 200, 249),
+    ('Leader Sapphire I', 250, 324),
+    ('Leader Sapphire II', 325, 399),
+    ('Leader Kim Cương I', 400, 499),
+    ('Leader Kim Cương II', 500, 599),
+    ('Leader Titan I', 600, 749),
+    ('Leader Titan II', 750, 999),
+    ('Leader Cao Thủ I', 1000, 1249),
+    ('Leader Cao Thủ II', 1250, 1499),
+    ('Leader Đại Cao Thủ I', 1500, 1749),
+    ('Leader Đại Cao Thủ II', 1750, 1999),
+    ('Leader Đại Cao Thủ III', 2000, 2499),
+    ('Leader Huyền Thoại I', 2500, 3749),
+    ('Leader Huyền Thoại II', 3750, 4999),
+    ('Leader Bất Diệt I', 5000, 7499),
+    ('Leader Bất Diệt II', 7500, 9999),
+    ('Leader Tối Thượng I', 10000, 14999),
+    ('Leader Tối Thượng II', 15000, 24999),
+    ('Leader Thần Thoại I', 25000, 37499),
+    ('Leader Thần Thoại II', 37500, 49999),
+    ('Leader Chí Tôn', 50000, 99999),
+    ('Leader Đế Vương', 100000, 249999),
+    ('Leader Thiên Đế', 250000, 499999),
+    ('Leader Thần Vương', 500000, 499999999),
 ]
 
 # ===== CẤP BẬC SIÊU CAO BỔ SUNG =====
@@ -302,41 +305,41 @@ CAP_BAC_CONFIG.update({
     'Leader Chúa Tể': {"xu_moi_video": 75000, "gioi_han_xem_ngay": 250, "thuong_gioi_thieu": 30000, "icon": '👑'},
 })
 MOC_CAP.extend([
-    ('Leader Thiên Tôn', 1000000000, 1999999999),
-    ('Leader Hỗn Nguyên', 2000000000, 4999999999),
-    ('Leader Chí Thánh', 5000000000, 9999999999),
-    ('Leader Thánh Vương', 10000000000, 19999999999),
-    ('Leader Đạo Tổ', 20000000000, 49999999999),
-    ('Leader Đế Tôn', 50000000000, 99999999999),
-    ('Leader Thần Đế', 100000000000, 199999999999),
-    ('Leader Vạn Cổ', 200000000000, 499999999999),
-    ('Leader Bất Hủ', 500000000000, 999999999999),
-    ('Leader Siêu Việt', 1000000000000, 1999999999999),
-    ('Leader Vô Cực', 2000000000000, 4999999999999),
-    ('Leader Tối Cường', 5000000000000, 9999999999999),
-    ('Leader Thần Thoại Tối Cao', 10000000000000, 49999999999999),
-    ('Leader Đấng Tối Cao', 50000000000000, 99999999999999),
-    ('Leader Chúa Tể', 100000000000000, 999999999999999999),
+    ('Leader Thiên Tôn', 500000000, 999999999),
+    ('Leader Hỗn Nguyên', 1000000000, 2499999999),
+    ('Leader Chí Thánh', 2500000000, 4999999999),
+    ('Leader Thánh Vương', 5000000000, 9999999999),
+    ('Leader Đạo Tổ', 10000000000, 24999999999),
+    ('Leader Đế Tôn', 25000000000, 49999999999),
+    ('Leader Thần Đế', 50000000000, 99999999999),
+    ('Leader Vạn Cổ', 100000000000, 249999999999),
+    ('Leader Bất Hủ', 250000000000, 499999999999),
+    ('Leader Siêu Việt', 500000000000, 999999999999),
+    ('Leader Vô Cực', 1000000000000, 2499999999999),
+    ('Leader Tối Cường', 2500000000000, 4999999999999),
+    ('Leader Thần Thoại Tối Cao', 5000000000000, 24999999999999),
+    ('Leader Đấng Tối Cao', 25000000000000, 49999999999999),
+    ('Leader Chúa Tể', 50000000000000, 499999999999999999),
 ])
 
 
 # ===== CẤP BẬC ELITE V5: mở rộng hệ thống lên 70 cấp =====
 _ELITE_RANKS_V5 = [
-    ('Leader Chí Tôn Vương', 1000000000000000000, 1499999999999999999),
-    ('Leader Thần Tôn', 1500000000000000000, 1999999999999999999),
-    ('Leader Thiên Tôn Vương', 2000000000000000000, 2499999999999999999),
-    ('Leader Hồng Mông', 2500000000000000000, 2999999999999999999),
-    ('Leader Hỗn Độn', 3000000000000000000, 3499999999999999999),
-    ('Leader Vĩnh Hằng', 3500000000000000000, 3999999999999999999),
-    ('Leader Thái Sơ', 4000000000000000000, 4499999999999999999),
-    ('Leader Thái Cổ', 4500000000000000000, 4999999999999999999),
-    ('Leader Cổ Đế', 5000000000000000000, 5499999999999999999),
-    ('Leader Thiên Mệnh', 5500000000000000000, 5999999999999999999),
-    ('Leader Chí Cao', 6000000000000000000, 6499999999999999999),
-    ('Leader Vạn Đạo', 6500000000000000000, 6999999999999999999),
-    ('Leader Vô Thượng', 7000000000000000000, 7499999999999999999),
-    ('Leader Siêu Thần', 7500000000000000000, 7999999999999999999),
-    ('Leader Tối Cao Thần', 8000000000000000000, 8999999999999999999),
+    ('Leader Chí Tôn Vương', 500000000000000000, 749999999999999999),
+    ('Leader Thần Tôn', 750000000000000000, 999999999999999999),
+    ('Leader Thiên Tôn Vương', 1000000000000000000, 1249999999999999999),
+    ('Leader Hồng Mông', 1250000000000000000, 1499999999999999999),
+    ('Leader Hỗn Độn', 1500000000000000000, 1749999999999999999),
+    ('Leader Vĩnh Hằng', 1750000000000000000, 1999999999999999999),
+    ('Leader Thái Sơ', 2000000000000000000, 2249999999999999999),
+    ('Leader Thái Cổ', 2250000000000000000, 2499999999999999999),
+    ('Leader Cổ Đế', 2500000000000000000, 2749999999999999999),
+    ('Leader Thiên Mệnh', 2750000000000000000, 2999999999999999999),
+    ('Leader Chí Cao', 3000000000000000000, 3249999999999999999),
+    ('Leader Vạn Đạo', 3250000000000000000, 3499999999999999999),
+    ('Leader Vô Thượng', 3500000000000000000, 3749999999999999999),
+    ('Leader Siêu Thần', 3750000000000000000, 3999999999999999999),
+    ('Leader Tối Cao Thần', 4000000000000000000, 8999999999999999999),
 ]
 _ELITE_ICONS_V5 = ['👑','🌌','🌠','🪐','☯️','♾️','✨','🔥','⚜️','💫','🔱','🏆','♾️','🚀','🌟']
 for _i, (_name, _lo, _hi) in enumerate(_ELITE_RANKS_V5):
@@ -349,6 +352,10 @@ for _i, (_name, _lo, _hi) in enumerate(_ELITE_RANKS_V5):
             'icon': _ELITE_ICONS_V5[_i],
         }
         MOC_CAP.append((_name, _lo, _hi))
+
+# V17: CẤP GIỚI THIỆU CHỈ 20 CẤP
+# Giữ lại đúng 20 mốc đầu của hệ thống giới thiệu; cấp nạp vẫn dùng CAP_NAP_AMOUNT riêng.
+MOC_CAP = MOC_CAP[:20]
 
 GOI_NANG_CAP = {
     "goi_bac": {
@@ -500,6 +507,7 @@ def init_db():
                 username TEXT,
                 cap_bac TEXT NOT NULL DEFAULT 'Thành viên',
                 so_du BIGINT NOT NULL DEFAULT 0,
+                so_du_nap BIGINT NOT NULL DEFAULT 0,
                 video_da_xem INTEGER NOT NULL DEFAULT 0,
                 video_ngay INTEGER NOT NULL DEFAULT 0,
                 gioi_thieu BIGINT NOT NULL DEFAULT 0,
@@ -626,6 +634,10 @@ def init_db():
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                 "xac_minh_nguoi_that INTEGER NOT NULL DEFAULT 0"
             )
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "so_du_nap BIGINT NOT NULL DEFAULT 0"
+            )
             # Referral counters support the high-rank thresholds without INT overflow.
             try:
                 conn.execute("ALTER TABLE users ALTER COLUMN gioi_thieu TYPE BIGINT")
@@ -652,6 +664,13 @@ def init_db():
                 conn.execute(
                     "ALTER TABLE users ADD COLUMN xac_minh_nguoi_that "
                     "INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN so_du_nap "
+                    "BIGINT NOT NULL DEFAULT 0"
                 )
             except sqlite3.OperationalError:
                 pass
@@ -697,6 +716,12 @@ def init_db():
             "ON verification_requests(status, thoi_gian)"
         )
 
+        # Chuẩn hóa hai loại số dư: so_du = tiền kiếm được/được rút; so_du_nap = tiền nạp/dịch vụ.
+        try:
+            conn.execute("UPDATE users SET so_du=COALESCE(so_du,0), so_du_nap=COALESCE(so_du_nap,0)")
+        except Exception:
+            pass
+
         # PostgreSQL: các database cũ có thể đã tạo video_links.id là INTEGER
         # không có DEFAULT. Khi đó INSERT không truyền id sẽ lỗi NOT NULL.
         # Gắn sequence an toàn để cả database cũ lẫn database mới đều tự cấp id.
@@ -733,6 +758,7 @@ def save_user(u):
                 ten=?,
                 cap_bac=?,
                 so_du=?,
+                so_du_nap=?,
                 video_da_xem=?,
                 video_ngay=?,
                 gioi_thieu=?,
@@ -748,6 +774,7 @@ def save_user(u):
                 u["ten"],
                 u["cap_bac"],
                 u["so_du"],
+                u.get("so_du_nap", 0),
                 u["video_da_xem"],
                 u["video_ngay"],
                 u["gioi_thieu"],
@@ -797,6 +824,7 @@ def init_user(user_id, ten, ref_by=None, username=None):
         "username": username,
         "cap_bac": "Thành viên",
         "so_du": int(get_setting("new_user_bonus", 0)),
+        "so_du_nap": 0,
         "video_da_xem": 0,
         "video_ngay": 0,
         "gioi_thieu": 0,
@@ -813,13 +841,13 @@ def init_user(user_id, ten, ref_by=None, username=None):
         conn.execute(
             """
             INSERT INTO users
-            (id, ten, username, cap_bac, so_du, video_da_xem, video_ngay,
+            (id, ten, username, cap_bac, so_du, so_du_nap, video_da_xem, video_ngay,
              gioi_thieu, ref_by, ngay_vao, captcha_da_xac_minh,
              ngay_reset, dang_xem, tai_khoan, xac_minh_nguoi_that)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                u["id"], u["ten"], u["username"], u["cap_bac"], u["so_du"],
+                u["id"], u["ten"], u["username"], u["cap_bac"], u["so_du"], u.get("so_du_nap", 0),
                 u["video_da_xem"], u["video_ngay"], u["gioi_thieu"],
                 u["ref_by"], u["ngay_vao"], 0, u["ngay_reset"],
                 0, None, 0,
@@ -845,12 +873,21 @@ def all_users():
     return [row_to_user(r) for r in rows]
 
 
-def update_balance(user_id, delta):
+def update_earned_balance(user_id, delta):
+    """Cộng/trừ SỐ DƯ KIẾM ĐƯỢC (được phép rút)."""
     with db() as conn:
-        conn.execute(
-            "UPDATE users SET so_du = so_du + ? WHERE id=?",
-            (delta, user_id),
-        )
+        conn.execute("UPDATE users SET so_du = so_du + ? WHERE id=?", (int(delta), user_id))
+
+
+def update_deposit_balance(user_id, delta):
+    """Cộng/trừ SỐ DƯ NẠP (chỉ dùng cho dịch vụ mạng xã hội)."""
+    with db() as conn:
+        conn.execute("UPDATE users SET so_du_nap = COALESCE(so_du_nap,0) + ? WHERE id=?", (int(delta), user_id))
+
+
+def update_balance(user_id, delta):
+    # Tương thích code cũ: balance mặc định là số dư kiếm được.
+    update_earned_balance(user_id, delta)
 
 
 def admin_log(action, target_user_id=None, detail=""):
@@ -927,12 +964,15 @@ def menu_chinh(user_id=None):
     rows = [
         [KeyboardButton("👤 Hồ Sơ"), KeyboardButton("🔍 Xem TikTok")],
         [KeyboardButton("👥 Cấp Giới Thiệu"), KeyboardButton("👑 Nâng Cấp Bậc")],
+        [KeyboardButton("🛒 Dịch Vụ TikTok"), KeyboardButton("🎯 Nhiệm Vụ")],
         [KeyboardButton("🎁 Điểm Danh"), KeyboardButton("🏆 BXH")],
-        [KeyboardButton("🎧 Hỗ Trợ"), KeyboardButton("🔐 Nhập CaptCha")],
-        [KeyboardButton("💰 Rút Tiền")],
+        [KeyboardButton("🎡 Vòng Quay"), KeyboardButton("🎁 Đổi Quà")],
+        [KeyboardButton("🎉 Sự Kiện"), KeyboardButton("🎧 Hỗ Trợ")],
+        [KeyboardButton("🔐 Nhập CaptCha")],
+        [KeyboardButton("💳 Nạp Tiền"), KeyboardButton("💰 Rút Tiền")],
     ]
     if is_admin(user_id):
-        rows.insert(2, [KeyboardButton("🎛 QUẢN LÝ ADMIN")])
+        rows.append([KeyboardButton("🎛 QUẢN LÝ ADMIN")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -1516,30 +1556,34 @@ async def xu_ly_goi_nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ),
         )
 
-    await query.edit_message_text(
-        f"""🏅 <b>{h(g['ten'])}</b>
+    qr = _vietqr_url(g["gia"], ma_nap) if "_vietqr_url" in globals() else None
+    copy_kb = _deposit_copy_keyboard(ma_nap, g["so_tk"], ma_nap) if "_deposit_copy_keyboard" in globals() else InlineKeyboardMarkup([[InlineKeyboardButton("📩 Tôi đã chuyển khoản", callback_data=f"dachuyen:{ma_nap}")]])
+    text = f"""🏅 <b>{h(g['ten'])}</b>
 
 💰 Nạp: {g['gia']:,}đ
 📺 Xem: {g['gioi_han_xem']} video TikTok/ngày
 💵 {g['tien_moi_video']:,}đ / video
 
 🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>
-Ngân hàng: {h(g['ngan_hang'])}
-Chủ TK: {h(g['chu_tk'])}
-Số TK: {h(g['so_tk'])}
+Ngân hàng: <b>{h(g['ngan_hang'])}</b>
+Chủ TK: <b>{h(g['chu_tk'])}</b>
+Số TK: <code>{h(g['so_tk'])}</code>
 
-💵 Số tiền: {g['gia']:,}đ
-📝 Nội dung CK: {h(ma_nap)}
+💵 Số tiền: <b>{g['gia']:,}đ</b>
+📝 Nội dung CK: <code>{h(ma_nap)}</code>
 
-⚠️ Vui lòng chuyển đúng số tiền và đúng nội dung!""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(
-                "📩 Tôi đã chuyển khoản",
-                callback_data=f"dachuyen:{ma_nap}",
-            )
-        ]]),
-    )
+📋 <b>Nhấn giữ hoặc dùng nút để sao chép STK/nội dung.</b>
+📷 Quét mã QR để chuyển khoản nhanh.
+
+⚠️ Vui lòng chuyển đúng số tiền và đúng nội dung!"""
+    if qr:
+        await context.bot.send_photo(chat_id=query.from_user.id, photo=qr, caption=text, parse_mode="HTML", reply_markup=copy_kb)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+    else:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=copy_kb)
     context.user_data["ma_nap_dang_xu_ly"] = ma_nap
     return NAP_GUI_ANH
 
@@ -2266,7 +2310,7 @@ Bạn cần xác minh người thật trước khi tạo yêu cầu rút tiền.
             f"""💰 <b>RÚT TIỀN</b>
 
 ❌ Số dư không đủ!
-💵 Hiện có: {u['so_du']:,}đ
+💰 Số dư kiếm được (được rút): {u['so_du']:,}đ
 💰 Tối thiểu: {RUT_TOI_THIEU:,}đ""",
             parse_mode="HTML",
             reply_markup=menu_chinh(u["id"]),
@@ -2483,6 +2527,7 @@ async def _admin_dashboard_content():
         tong_cho_nap = conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
         tong_cho_xac_minh = conn.execute("SELECT COUNT(*) FROM verification_requests WHERE status='pending'").fetchone()[0]
         tong_so_du = conn.execute("SELECT COALESCE(SUM(so_du),0) FROM users").fetchone()[0]
+        tong_so_du_nap = conn.execute("SELECT COALESCE(SUM(so_du_nap),0) FROM users").fetchone()[0]
         nguoi_bi_khoa = conn.execute("SELECT COUNT(*) FROM users WHERE bi_khoa=1").fetchone()[0]
         ngay_prefix = now_vn().strftime("%d/%m/%Y") + "%"
         nguoi_moi_hom_nay = conn.execute("SELECT COUNT(*) FROM users WHERE ngay_vao LIKE ?", (ngay_prefix,)).fetchone()[0]
@@ -2493,7 +2538,7 @@ async def _admin_dashboard_content():
         "🎛 <b>ADMIN CONTROL</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 User: <b>{tong_nguoi:,}</b>  •  🔒 Khóa: <b>{nguoi_bi_khoa:,}</b>\n"
-        f"💰 Tổng số dư: <b>{tong_so_du:,}đ</b>\n\n"
+        f"💰 Tổng số dư kiếm được: <b>{tong_so_du:,}đ</b>\n💳 Tổng số dư nạp: <b>{tong_so_du_nap:,}đ</b>\n\n"
         f"⏳ Chờ xử lý: 💸 <b>{tong_cho_rut}</b>  •  📥 <b>{tong_cho_nap}</b>  •  🛡 <b>{tong_cho_xac_minh}</b>\n"
         f"📈 Hôm nay: 💸 <b>{rut_hom_nay}</b> đơn  •  <b>{tien_rut_hom_nay:,}đ</b>  •  🆕 <b>{nguoi_moi_hom_nay}</b> user\n\n"
         "⚡ <b>Chọn chức năng quản lý</b>"
@@ -2800,9 +2845,12 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         context.user_data["admin_user_action"] = action
         prompts = {
-            "cong": "💰 Nhập số tiền muốn CỘNG cho người dùng (ví dụ: 50000):",
-            "tru": "💸 Nhập số tiền muốn TRỪ cho người dùng (ví dụ: 50000):",
-            "setbal": "💵 Nhập SỐ DƯ MỚI (ví dụ: 100000):",
+            "cong": "💰 Nhập số tiền muốn CỘNG vào SỐ DƯ KIẾM ĐƯỢC (ví dụ: 50000):",
+            "tru": "💸 Nhập số tiền muốn TRỪ khỏi SỐ DƯ KIẾM ĐƯỢC (ví dụ: 50000):",
+            "setbal": "💵 Nhập SỐ DƯ KIẾM ĐƯỢC mới (ví dụ: 100000):",
+            "congnap": "💳 Nhập số tiền muốn CỘNG vào SỐ DƯ NẠP:",
+            "trunap": "💳 Nhập số tiền muốn TRỪ khỏi SỐ DƯ NẠP:",
+            "setbalnap": "💳 Nhập SỐ DƯ NẠP mới:",
             "cap": "💳 Nhập cấp nạp mới:\n" + "\n".join(f"• {x}" for x in CAP_BAC_CONFIG),
             "capgt": "👥 Nhập cấp giới thiệu mới:\n" + "\n".join(f"• {x}" for x in CAP_BAC_CONFIG),
             "capnap": "💳 Nhập cấp nạp mới:\n" + "\n".join(f"• {x}" for x in CAP_BAC_CONFIG),
@@ -2828,7 +2876,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         with db() as conn:
             conn.execute(
-                """UPDATE users SET cap_bac=?, so_du=0, video_da_xem=0, video_ngay=0,
+                """UPDATE users SET cap_bac=?, so_du=0, so_du_nap=0, video_da_xem=0, video_ngay=0,
                 gioi_thieu=0, captcha_da_xac_minh=0, dang_xem=0, tai_khoan=NULL,
                 xac_minh_nguoi_that=0, ngay_reset=? WHERE id=?""",
                 ("Thành viên", today_vn(), user_id),
@@ -3031,7 +3079,7 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                     (ma_nap,),
                 )
                 if str(yc.get("deposit_type", "rank")) == "balance":
-                    conn.execute("UPDATE users SET so_du=so_du+?, total_deposited=COALESCE(total_deposited,0)+? WHERE id=?", (yc["gia"], yc["gia"], yc["user_id"]))
+                    conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+?, total_deposited=COALESCE(total_deposited,0)+? WHERE id=?", (yc["gia"], yc["gia"], yc["user_id"]))
                     user_now = conn.execute("SELECT total_deposited FROM users WHERE id=?", (yc["user_id"],)).fetchone()
                     new_rank = _v13_rank_by_deposit(user_now[0] if user_now else yc["gia"])
                     conn.execute("UPDATE users SET cap_nap=?, cap_bac=?, total_deposited=COALESCE(total_deposited,0) WHERE id=?", (new_rank,new_rank,yc["user_id"]))
@@ -3039,8 +3087,8 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                     conn.execute("UPDATE users SET cap_nap=?, cap_bac=? WHERE id=?", (yc["cap_moi"], yc["cap_moi"], yc["user_id"]))
 
                 if str(yc.get("deposit_type", "rank")) == "balance":
-                    user_now = conn.execute("SELECT so_du,cap_nap FROM users WHERE id=?", (yc["user_id"],)).fetchone()
-                    await context.bot.send_message(chat_id=yc["user_id"], text=(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n💵 +{yc['gia']:,}đ\n💰 Số dư: <b>{user_now['so_du']:,}đ</b>\n💳 Cấp nạp: <b>{h(user_now['cap_nap'] or 'Thành viên')}</b>" if user_now else "✅ Nạp tiền thành công."), parse_mode="HTML")
+                    user_now = conn.execute("SELECT so_du,so_du_nap,cap_nap FROM users WHERE id=?", (yc["user_id"],)).fetchone()
+                    await context.bot.send_message(chat_id=yc["user_id"], text=(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n💵 +{yc['gia']:,}đ\n💳 Số dư dịch vụ: <b>{user_now['so_du_nap']:,}đ</b>\n💰 Số dư kiếm được: <b>{user_now['so_du']:,}đ</b>\n💳 Cấp nạp: <b>{h(user_now['cap_nap'] or 'Thành viên')}</b>" if user_now else "✅ Nạp tiền thành công."), parse_mode="HTML")
                 else:
                     await context.bot.send_message(chat_id=yc["user_id"], text=f"""✅ <b>NÂNG CẤP THÀNH CÔNG!</b>\n\n🏆 Cấp nạp: {h(yc['cap_moi'])}\n📺 Giới hạn: {CAP_BAC_CONFIG[yc['cap_moi']]['gioi_han_xem_ngay']} video/ngày\n💵 Thưởng/video: {CAP_BAC_CONFIG[yc['cap_moi']]['xu_moi_video']:,}đ""", parse_mode="HTML")
                 await query.edit_message_text(
@@ -3272,7 +3320,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     continue
 
                 if str(yc.get("deposit_type", "rank")) == "balance":
-                    conn.execute("UPDATE users SET so_du=so_du+?, total_deposited=COALESCE(total_deposited,0)+? WHERE id=?", (yc["gia"],yc["gia"],yc["user_id"]))
+                    conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+?, total_deposited=COALESCE(total_deposited,0)+? WHERE id=?", (yc["gia"],yc["gia"],yc["user_id"]))
                     total_row=conn.execute("SELECT total_deposited FROM users WHERE id=?",(yc["user_id"],)).fetchone()
                     new_rank=_v13_rank_by_deposit(total_row[0] if total_row else yc["gia"])
                     conn.execute("UPDATE users SET cap_nap=?, cap_bac=? WHERE id=?",(new_rank,new_rank,yc["user_id"]))
@@ -3344,7 +3392,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
             try:
                 if str(yc.get("deposit_type", "rank")) == "balance":
                     user_now=get_user(yc["user_id"])
-                    txt=(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n💵 +{yc['gia']:,}đ\n💰 Số dư: <b>{user_now['so_du']:,}đ</b>\n💳 Cấp nạp: <b>{h(user_now.get('cap_nap','Thành viên'))}</b>\n🔔 Mã: <code>{h(yc['request_id'])}</code>" if user_now else "✅ Nạp tiền thành công.")
+                    txt=(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n💵 +{yc['gia']:,}đ\n💳 Số dư dịch vụ: <b>{user_now['so_du_nap']:,}đ</b>\n💰 Số dư kiếm được: <b>{user_now['so_du']:,}đ</b>\n🔔 Mã: <code>{h(yc['request_id'])}</code>" if user_now else "✅ Nạp tiền thành công.")
                 else:
                     txt=("✅ <b>NÂNG CẤP THÀNH CÔNG!</b>\n\n"
                          f"🏆 Cấp nạp: {h(yc['cap_moi'])}\n"
@@ -3714,6 +3762,24 @@ async def admin_xu_ly_sua_nguoi(update: Update, context: ContextTypes.DEFAULT_TY
             with db() as conn:
                 conn.execute("UPDATE users SET so_du=? WHERE id=?", (amount, user_id))
             msg = f"✅ Đã đặt số dư thành {amount:,}đ cho <code>{user_id}</code>."
+        elif action == "congnap":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount <= 0: raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+? WHERE id=?", (amount, user_id))
+            msg = f"✅ Đã cộng {amount:,}đ vào <b>số dư nạp</b> của <code>{user_id}</code>."
+        elif action == "trunap":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount <= 0: raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET so_du_nap=MAX(0,COALESCE(so_du_nap,0)-?) WHERE id=?", (amount, user_id))
+            msg = f"✅ Đã trừ {amount:,}đ khỏi <b>số dư nạp</b> của <code>{user_id}</code>."
+        elif action == "setbalnap":
+            amount = int(raw.replace(",", "").replace(".", ""))
+            if amount < 0: raise ValueError
+            with db() as conn:
+                conn.execute("UPDATE users SET so_du_nap=? WHERE id=?", (amount, user_id))
+            msg = f"✅ Đã đặt <b>số dư nạp</b> thành {amount:,}đ cho <code>{user_id}</code>."
         elif action == "cap":
             if raw not in CAP_BAC_CONFIG:
                 raise ValueError
@@ -4145,6 +4211,7 @@ def init_db():
         _safe_add_column(conn, "users", "risk_score", "INTEGER NOT NULL DEFAULT 0")
         _safe_add_column(conn, "users", "last_active_at", "TEXT")
         _safe_add_column(conn, "users", "total_earned", "BIGINT NOT NULL DEFAULT 0")
+        _safe_add_column(conn, "users", "so_du_nap", "BIGINT NOT NULL DEFAULT 0")
         _safe_add_column(conn, "users", "total_withdrawn", "BIGINT NOT NULL DEFAULT 0")
         _safe_add_column(conn, "users", "last_withdraw_at", "TEXT")
         _safe_add_column(conn, "users", "new_user_bonus_claimed", "INTEGER NOT NULL DEFAULT 0")
@@ -4228,6 +4295,58 @@ def init_db():
                         if _k in _cfg: CAP_BAC_CONFIG[_name][_k]=int(_cfg[_k])
             except Exception:
                 pass
+
+        # V18: điều chỉnh thưởng xem video theo bảng 20 cấp giới thiệu mới.
+        # Chỉ áp dụng một lần cho DB cũ, sau đó Admin vẫn có thể tự chỉnh từng cấp.
+        try:
+            reward_version = conn.execute("SELECT value FROM system_settings WHERE key=?", ("video_reward_version",)).fetchone()
+            if not reward_version or str(reward_version[0]) != "2":
+                _video_reward_v2 = [
+                    1500, 1800, 2200, 2600, 3000, 3400, 3800, 4200, 4600, 5000,
+                    5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000
+                ]
+                for _idx, (_name, _lo, _hi) in enumerate(MOC_CAP[:20]):
+                    if _name in CAP_BAC_CONFIG:
+                        CAP_BAC_CONFIG[_name]["xu_moi_video"] = _video_reward_v2[_idx]
+                        try:
+                            conn.execute(
+                                "INSERT INTO system_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                ("rank_cfg:"+_name, json.dumps(CAP_BAC_CONFIG[_name], ensure_ascii=False))
+                            )
+                        except Exception:
+                            pass
+                conn.execute("INSERT INTO system_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("video_reward_version", "2"))
+        except Exception:
+            pass
+
+        # V18: phân loại lại các khoản NẠP TIỀN trực tiếp cũ nếu trước đây
+        # từng bị ghi chung vào so_du. Chỉ lấy đơn nap_tien/balance, không đụng
+        # các gói nâng cấp cấp bậc. Chạy đúng một lần.
+        try:
+            split_version = conn.execute("SELECT value FROM system_settings WHERE key=?", ("balance_split_version",)).fetchone()
+            if not split_version or str(split_version[0]) != "1":
+                rows = conn.execute("""
+                    SELECT user_id, COALESCE(SUM(gia),0) AS total_nap
+                    FROM deposits
+                    WHERE status='approved'
+                      AND (goi_key='nap_tien' OR deposit_type='balance')
+                    GROUP BY user_id
+                """).fetchall()
+                for _r in rows:
+                    _uid = _r['user_id']
+                    _nap = int(_r['total_nap'] or 0)
+                    _urow = conn.execute("SELECT so_du,so_du_nap FROM users WHERE id=?", (_uid,)).fetchone()
+                    if not _urow or _nap <= 0:
+                        continue
+                    _existing_nap = int(_urow['so_du_nap'] or 0)
+                    # Chỉ chuyển phần còn thiếu sang ví nạp; không làm âm ví kiếm được.
+                    _missing = max(0, _nap - _existing_nap)
+                    _move = min(_missing, int(_urow['so_du'] or 0))
+                    if _move > 0:
+                        conn.execute("UPDATE users SET so_du=so_du-?, so_du_nap=COALESCE(so_du_nap,0)+? WHERE id=?", (_move,_move,_uid))
+                conn.execute("INSERT INTO system_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("balance_split_version", "1"))
+        except Exception:
+            pass
 
 
 
@@ -5638,14 +5757,15 @@ def menu_chinh(user_id=None):
     rows=[
         [KeyboardButton('👤 Hồ Sơ'),KeyboardButton('🔍 Xem TikTok')],
         [KeyboardButton('👥 Cấp Giới Thiệu'),KeyboardButton('👑 Nâng Cấp Bậc')],
-        [KeyboardButton('💳 Nạp Tiền'),KeyboardButton('🛒 Dịch Vụ TikTok')],
-        [KeyboardButton('🎯 Nhiệm Vụ'),KeyboardButton('🎁 Điểm Danh')],
-        [KeyboardButton('🏆 BXH'),KeyboardButton('🎡 Vòng Quay')],
-        [KeyboardButton('🎁 Đổi Quà'),KeyboardButton('🎉 Sự Kiện')],
-        [KeyboardButton('🎧 Hỗ Trợ'),KeyboardButton('🔐 Nhập CaptCha')],
-        [KeyboardButton('💰 Rút Tiền')],
+        [KeyboardButton('💳 Nạp Tiền'),KeyboardButton('💰 Rút Tiền')],
+        [KeyboardButton('🛒 Dịch Vụ TikTok'),KeyboardButton('🎯 Nhiệm Vụ')],
+        [KeyboardButton('🎁 Điểm Danh'),KeyboardButton('🏆 BXH')],
+        [KeyboardButton('🎡 Vòng Quay'),KeyboardButton('🎁 Đổi Quà')],
+        [KeyboardButton('🎉 Sự Kiện'),KeyboardButton('🎧 Hỗ Trợ')],
+        [KeyboardButton('🔐 Nhập CaptCha')],
     ]
-    if is_admin(user_id or 0): rows.insert(2,[KeyboardButton('🎛 QUẢN LÝ ADMIN')])
+    if is_admin(user_id or 0):
+        rows.append([KeyboardButton('🎛 QUẢN LÝ ADMIN')])
     return ReplyKeyboardMarkup(rows,resize_keyboard=True)
 
 
@@ -5847,7 +5967,8 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 <b>HỒ SƠ THÀNH VIÊN</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 ID: <code>{u['id']}</code>\n"
         f"👤 Tên: <b>{h(u['ten'])}</b>\n"
-        f"💰 Số dư: <b>{u['so_du']:,}đ</b>\n"
+        f"💰 Số dư kiếm được: <b>{int(u.get('so_du',0) or 0):,}đ</b>\n"
+        f"💳 Số dư nạp: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>\n"
         f"📥 Tổng nạp: <b>{int(u.get('total_deposited',0) or 0):,}đ</b>\n"
         f"👥 Cấp giới thiệu: <b>{h(gt)}</b>\n"
         f"💳 Cấp nạp: <b>{h(nap)}</b>\n"
@@ -5900,37 +6021,148 @@ async def v13_rank_type_callback(update: Update, context: ContextTypes.DEFAULT_T
     await q.message.reply_text("\n".join(lines),parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Nâng cấp bậc",callback_data="rank_type:back")]]))
 
 
+
+def _deposit_bank_info():
+    bank = runtime_text('deposit_bank', 'ACB').strip()
+    owner = runtime_text('deposit_account_name', 'HA QUANG MINH').strip()
+    account = runtime_text('deposit_account_number', '25607451').strip()
+    # VietQR dùng mã BIN ngân hàng. Có thể đổi bằng setting deposit_bank_bin.
+    known_bins = {
+        'ACB': '970416',
+        'VCB': '970436', 'VIETCOMBANK': '970436',
+        'BIDV': '970418', 'TCB': '970407', 'TECHCOMBANK': '970407',
+        'MB': '970422', 'MBBANK': '970422',
+        'VPB': '970432', 'VPBANK': '970432',
+        'VIB': '970441', 'TPB': '970423', 'TPBANK': '970423',
+        'STB': '970403', 'SACOMBANK': '970403',
+        'OCB': '970448', 'SHB': '970443', 'MSB': '970426',
+        'HDB': '970437', 'HDBANK': '970437',
+    }
+    bin_code = runtime_text('deposit_bank_bin', known_bins.get(bank.upper(), '')).strip()
+    return bank, owner, account, bin_code
+
+
+def _vietqr_url(amount: int, transfer_content: str):
+    bank, owner, account, bin_code = _deposit_bank_info()
+    if not bin_code or not account:
+        return None
+    return (
+        f"https://img.vietqr.io/image/{quote(bin_code)}-{quote(account)}-compact2.png"
+        f"?amount={int(amount)}&addInfo={quote(transfer_content)}&accountName={quote(owner)}"
+    )
+
+
+def _copy_text_button(label: str, value: str):
+    """Tạo nút sao chép nếu phiên bản python-telegram-bot hỗ trợ CopyTextButton."""
+    try:
+        from telegram import CopyTextButton
+        return InlineKeyboardButton(label, copy_text=CopyTextButton(text=str(value)))
+    except Exception:
+        return None
+
+
+def _deposit_copy_keyboard(transfer_content: str, account: str, rid: str):
+    rows = []
+    b1 = _copy_text_button('📋 Sao chép STK', account)
+    b2 = _copy_text_button('📝 Sao chép nội dung', transfer_content)
+    if b1 and b2:
+        rows.append([b1, b2])
+    elif b1:
+        rows.append([b1])
+    elif b2:
+        rows.append([b2])
+    rows.append([InlineKeyboardButton('📩 Tôi đã chuyển khoản', callback_data=f'dachuyen:{rid}')])
+    return InlineKeyboardMarkup(rows)
+
+
+def _menu_button_texts():
+    return {
+        '👤 Hồ Sơ', '🔍 Xem TikTok', '👥 Cấp Giới Thiệu', '👑 Nâng Cấp Bậc',
+        '💳 Nạp Tiền', '💰 Rút Tiền', '🛒 Dịch Vụ TikTok', '🎯 Nhiệm Vụ',
+        '🎁 Điểm Danh', '🏆 BXH', '🎡 Vòng Quay', '🎁 Đổi Quà',
+        '🎉 Sự Kiện', '🎧 Hỗ Trợ', '🔐 Nhập CaptCha', '🎛 QUẢN LÝ ADMIN'
+    }
+
+
+async def _conversation_menu_interrupt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Không cho nút menu bị hiểu thành số tiền/link/tài khoản trong một luồng nhập."""
+    text = (update.effective_message.text or '').strip()
+    if text not in _menu_button_texts():
+        return None
+    # Xóa dữ liệu tạm của các luồng đang nhập để không bị nối nhầm sang lệnh sau.
+    for key in ('v13_deposit_id', 'v13_deposit_amount', 'service_id', 'dang_lien_ket', 'dang_rut_tien', 'ma_nap_dang_xu_ly'):
+        context.user_data.pop(key, None)
+    await update.message.reply_text(
+        '↩️ <b>Đã thoát thao tác đang nhập.</b>\n\n'
+        'Chọn lại chức năng bạn muốn thực hiện ở menu bên dưới.',
+        parse_mode='HTML', reply_markup=menu_chinh(update.effective_user.id)
+    )
+    return ConversationHandler.END
+
+
 async def v13_nap_tien_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer()
+    u=get_user(q.from_user.id)
+    if not u: return ConversationHandler.END
+    bank, owner, account, _ = _deposit_bank_info()
     await q.message.reply_text(
-        "💳 <b>NẠP TIỀN VÀO SỐ DƯ</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏦 Ngân hàng: <b>{h(runtime_text('deposit_bank','ACB'))}</b>\n"
-        f"👤 Chủ TK: <b>{h(runtime_text('deposit_account_name','HA QUANG MINH'))}</b>\n"
-        f"🔢 Số TK: <code>{h(runtime_text('deposit_account_number','25607451'))}</code>\n\n"
-        "Nhập số tiền muốn nạp (đ):",
+        "💳 <b>NẠP TIỀN VÀO SỐ DƯ DỊCH VỤ</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Số dư kiếm được: <b>{int(u.get('so_du',0) or 0):,}đ</b>\n"
+        f"💳 Số dư dịch vụ: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>\n"
+        "🔒 Tiền nạp chỉ dùng cho Dịch Vụ TikTok, không dùng để rút.\n\n"
+        "🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>\n"
+        f"🏦 Ngân hàng: <b>{h(bank)}</b>\n"
+        f"👤 Chủ TK: <b>{h(owner)}</b>\n"
+        f"🔢 Số TK: <code>{h(account)}</code>\n\n"
+        "💵 Nhập số tiền muốn nạp (tối thiểu <b>10.000đ</b>):\n"
+        "📌 Bạn có thể nhập: <code>10000</code>, <code>10.000đ</code> hoặc <code>10,000đ</code>.",
         parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return NAP_TIEN_AMOUNT
 
-
 async def v13_nap_tien_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try: amount=int((update.effective_message.text or '').replace(',','').replace('.','').replace('đ','').strip())
-    except Exception: amount=0
+    raw = (update.effective_message.text or '').strip()
+    if not re.fullmatch(r'[0-9\s.,₫đĐ]+', raw):
+        await update.message.reply_text(
+            "❌ Số tiền không hợp lệ. Ví dụ: <code>50000</code> hoặc <code>50.000đ</code>.",
+            parse_mode='HTML')
+        return NAP_TIEN_AMOUNT
+    digits = re.sub(r'\D', '', raw)
+    amount = int(digits) if digits else 0
     if amount < 10000:
-        await update.message.reply_text("❌ Số tiền nạp tối thiểu là 10,000đ. Nhập lại:")
+        await update.message.reply_text("❌ Số tiền nạp tối thiểu là <b>10.000đ</b>. Nhập lại:", parse_mode='HTML')
+        return NAP_TIEN_AMOUNT
+    if amount > 2_000_000_000:
+        await update.message.reply_text("❌ Số tiền nạp vượt giới hạn cho phép. Vui lòng nhập số nhỏ hơn.", parse_mode='HTML')
         return NAP_TIEN_AMOUNT
     u=get_user(update.effective_user.id)
     if not u: return ConversationHandler.END
     rid=f"NAP{u['id']}{int(time.time()*1000)}"
     context.user_data['v13_deposit_id']=rid
+    bank, owner, account, _ = _deposit_bank_info()
     with db() as conn:
         conn.execute("INSERT INTO deposits(request_id,user_id,ten,goi_key,cap_moi,gia,thoi_gian,status,deposit_type) VALUES (?,?,?,?,?,?,?,'pending','balance')",
                      (rid,u['id'],u['ten'],'nap_tien',u.get('cap_nap','Thành viên'),amount,now_vn().strftime('%d/%m/%Y %H:%M')))
-    await update.message.reply_text(
-        f"📩 <b>ĐƠN NẠP #{h(rid)}</b>\n\n💵 Số tiền: <b>{amount:,}đ</b>\n"
-        "Hãy chuyển khoản đúng số tiền và gửi <b>ảnh biên lai</b> ngay tại đây.", parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
+    qr = _vietqr_url(amount, rid)
+    kb = _deposit_copy_keyboard(rid, account, rid)
+    text = (
+        f"💳 <b>XÁC NHẬN NẠP TIỀN</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Mã nạp: <code>{h(rid)}</code>\n"
+        f"💵 Số tiền: <b>{amount:,}đ</b>\n\n"
+        f"🏦 Ngân hàng: <b>{h(bank)}</b>\n"
+        f"👤 Chủ TK: <b>{h(owner)}</b>\n"
+        f"🔢 Số TK: <code>{h(account)}</code>\n"
+        f"📝 Nội dung CK: <code>{h(rid)}</code>\n\n"
+        "📋 <b>Thông tin trên có thể sao chép.</b>\n"
+        "📷 Quét mã QR để chuyển khoản nhanh.\n\n"
+        "⚠️ Chuyển <b>đúng số tiền</b> và <b>đúng nội dung</b>, sau đó gửi ảnh biên lai tại đây.\n\n"
+        "💳 Khoản nạp sau khi duyệt sẽ vào <b>Số dư dịch vụ</b> và không thể rút."
+    )
+    if qr:
+        await update.message.reply_photo(photo=qr, caption=text, parse_mode='HTML', reply_markup=kb)
+    else:
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
     context.user_data['v13_deposit_amount']=amount
     return NAP_TIEN_RECEIPT
-
 
 async def v13_nap_tien_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rid=context.user_data.get('v13_deposit_id')
@@ -5947,14 +6179,14 @@ async def v13_nap_tien_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ Đơn nạp không còn hiệu lực.",reply_markup=menu_chinh(update.effective_user.id)); return ConversationHandler.END
         conn.execute("UPDATE deposits SET photo_file_id=? WHERE request_id=?",(file_id,rid))
     caption=(f"📥 <b>ĐƠN NẠP TIỀN</b>\n\n🆔 <code>{yc['user_id']}</code>\n👤 {h(yc['ten'])}\n"
-             f"💵 {yc['gia']:,}đ\n🔔 <code>{h(rid)}</code>\n📌 Loại: Nạp số dư")
+             f"💵 {yc['gia']:,}đ\n🔔 <code>{h(rid)}</code>\n📌 Loại: Nạp số dư dịch vụ")
     kb=InlineKeyboardMarkup([[InlineKeyboardButton("✅ DUYỆT",callback_data=f"duyet_nap_ok:{rid}"),InlineKeyboardButton("❌ TỪ CHỐI",callback_data=f"duyet_nap_no:{rid}")]])
     
     if photo:
         await context.bot.send_photo(chat_id=ADMIN_ID,photo=file_id,caption=caption,parse_mode='HTML',reply_markup=kb)
     else:
         await context.bot.send_document(chat_id=ADMIN_ID,document=file_id,caption=caption,parse_mode='HTML',reply_markup=kb)
-    await update.message.reply_text("✅ Đã gửi biên lai. Đơn đang chờ Admin duyệt.",reply_markup=menu_chinh(update.effective_user.id))
+    await update.message.reply_text("✅ <b>Đã gửi biên lai!</b>\n\n⏳ Đơn đang chờ Admin duyệt.\n💳 Khi duyệt, tiền sẽ cộng vào <b>Số dư dịch vụ</b> để sử dụng cho Dịch Vụ TikTok.",parse_mode='HTML',reply_markup=menu_chinh(update.effective_user.id))
     context.user_data.pop('v13_deposit_id',None); context.user_data.pop('v13_deposit_amount',None)
     return ConversationHandler.END
 
@@ -5966,7 +6198,7 @@ async def v13_social_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for r in rows:
         buttons.append([InlineKeyboardButton(f"{r['name']} · {int(r['unit_price']):,}đ/1",callback_data=f"svc:{r['id']}")])
     buttons.append([InlineKeyboardButton("📋 Đơn của tôi",callback_data="svc:orders")])
-    text=("🛒 <b>DỊCH VỤ TIKTOK</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    text=(f"🛒 <b>DỊCH VỤ TIKTOK</b>\n━━━━━━━━━━━━━━━━━━━━\n\n💳 Số dư dịch vụ: <b>{int((get_user(update.effective_user.id) or {}).get('so_du_nap',0) or 0):,}đ</b>\n\n"
           "👥 Theo dõi • ❤️ Tim • 👀 Lượt xem • 🎬 Nội dung\n"
           "⚠️ Đơn tương tác được xử lý thủ công/qua nhà cung cấp được phép; bot không tự spam hoặc tạo tương tác giả.\n\n"+
           "\n".join(f"• {h(r['name'])}: {int(r['unit_price']):,}đ/1" for r in rows))
@@ -6007,13 +6239,13 @@ async def v13_service_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Số lượng phải từ {int(r['min_qty']):,} đến {int(r['max_qty']):,}."); return DV_TIKTOK_INPUT
     total=int(r['unit_price'])*qty; now=now_vn().strftime('%d/%m/%Y %H:%M:%S'); oid=f"DV{u['id']}{int(time.time()*1000)}"
     with db() as conn:
-        changed=conn.execute("UPDATE users SET so_du=so_du-? WHERE id=? AND so_du>=?",(total,u['id'],total)).rowcount
+        changed=conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)-? WHERE id=? AND COALESCE(so_du_nap,0)>=?",(total,u['id'],total)).rowcount
         if changed!=1:
-            await update.message.reply_text(f"❌ Số dư không đủ. Cần {total:,}đ, hiện có {int(u['so_du']):,}đ.",reply_markup=menu_chinh(u['id'])); return ConversationHandler.END
+            await update.message.reply_text(f"❌ Số dư không đủ. Cần {total:,}đ, hiện có {int(u.get('so_du_nap',0) or 0):,}đ trong số dư nạp.",reply_markup=menu_chinh(u['id'])); return ConversationHandler.END
         conn.execute("INSERT INTO service_orders(order_id,user_id,service_id,link,quantity,total,status,created_at,updated_at) VALUES (?,?,?,?,?,?, 'pending',?,?)",(oid,u['id'],sid,link,qty,total,now,now))
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Nhận xử lý',callback_data=f'svc_admin:process:{oid}'),InlineKeyboardButton('❌ Từ chối + hoàn tiền',callback_data=f'svc_admin:reject:{oid}')]])
     await context.bot.send_message(chat_id=ADMIN_ID,text=f"🛒 <b>ĐƠN DỊCH VỤ TIKTOK</b>\n\n🆔 <code>{u['id']}</code>\n👤 {h(u['ten'])}\n📦 {h(r['name'])}\n🔗 {h(link)}\n🔢 SL: <b>{qty:,}</b>\n💵 Tổng: <b>{total:,}đ</b>\n🔔 <code>{oid}</code>",parse_mode='HTML',reply_markup=kb)
-    await update.message.reply_text(f"✅ <b>Đã tạo đơn {oid}</b>\n💵 Đã giữ {total:,}đ.\n⏳ Chờ Admin xử lý.",parse_mode='HTML',reply_markup=menu_chinh(u['id']))
+    await update.message.reply_text(f"✅ <b>Đã tạo đơn {oid}</b>\n💳 Đã giữ {total:,}đ từ số dư nạp.\n⏳ Chờ Admin xử lý.",parse_mode='HTML',reply_markup=menu_chinh(u['id']))
     context.user_data.pop('service_id',None); return ConversationHandler.END
 
 
@@ -6032,7 +6264,7 @@ async def v13_service_admin_callback(update: Update, context: ContextTypes.DEFAU
             conn.execute("UPDATE service_orders SET status='done',admin_id=?,updated_at=? WHERE order_id=? AND status='processing'",(q.from_user.id,now,oid)); msg='✅ Đơn đã HOÀN TẤT.'
         elif action in ('reject','refund') and row['status'] in ('pending','processing'):
             conn.execute("UPDATE service_orders SET status='refunded',admin_id=?,updated_at=?,note=? WHERE order_id=? AND status=?",(q.from_user.id,now,'Admin hoàn tiền',oid,row['status']))
-            conn.execute("UPDATE users SET so_du=so_du+? WHERE id=?",(row['total'],row['user_id'])); msg=f"↩️ Đã hoàn {int(row['total']):,}đ."
+            conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+? WHERE id=?",(row['total'],row['user_id'])); msg=f"↩️ Đã hoàn {int(row['total']):,}đ."
         else:
             await q.answer('Trạng thái đơn không phù hợp.',show_alert=True); return
     try: await context.bot.send_message(chat_id=row['user_id'],text=msg)
@@ -6095,13 +6327,63 @@ _v13_override_admin_dashboard()
 async def v13_nap_tien_message_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u=get_user(update.effective_user.id)
     if not u: return ConversationHandler.END
+    bank = runtime_text('deposit_bank','ACB')
+    owner = runtime_text('deposit_account_name','HA QUANG MINH')
+    account = runtime_text('deposit_account_number','25607451')
     await update.message.reply_text(
-        "💳 <b>NẠP TIỀN VÀO SỐ DƯ</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏦 Ngân hàng: <b>{h(runtime_text('deposit_bank','ACB'))}</b>\n"
-        f"👤 Chủ TK: <b>{h(runtime_text('deposit_account_name','HA QUANG MINH'))}</b>\n"
-        f"🔢 Số TK: <code>{h(runtime_text('deposit_account_number','25607451'))}</code>\n\nNhập số tiền muốn nạp (đ):",
+        "💳 <b>NẠP TIỀN VÀO SỐ DƯ DỊCH VỤ</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Số dư kiếm được: <b>{int(u.get('so_du',0) or 0):,}đ</b>\n"
+        f"💳 Số dư dịch vụ: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>\n"
+        "🔒 Tiền nạp chỉ dùng cho Dịch Vụ TikTok, không dùng để rút.\n\n"
+        "🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>\n"
+        f"🏦 Ngân hàng: <b>{h(bank)}</b>\n"
+        f"👤 Chủ TK: <b>{h(owner)}</b>\n"
+        f"🔢 Số TK: <code>{h(account)}</code>\n\n"
+        "💵 Nhập số tiền muốn nạp (tối thiểu <b>10.000đ</b>):",
         parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return NAP_TIEN_AMOUNT
+
+
+_NAP_MENU_TEXTS = (
+    '👤 Hồ Sơ|🔍 Xem TikTok|👥 Cấp Giới Thiệu|👑 Nâng Cấp Bậc|'
+    '💳 Nạp Tiền|💰 Rút Tiền|🛒 Dịch Vụ TikTok|🎯 Nhiệm Vụ|'
+    '🎁 Điểm Danh|🏆 BXH|🎡 Vòng Quay|🎁 Đổi Quà|🎉 Sự Kiện|'
+    '🎧 Hỗ Trợ|🔐 Nhập CaptCha|🎛 QUẢN LÝ ADMIN'
+)
+
+
+async def _nap_tien_interrupt_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Thoát luồng nạp và xử lý luôn nút menu vừa bấm.
+
+    ConversationHandler đã nhận update nên handler group phía sau không được
+    chạy lại; vì vậy phải dispatch trực tiếp để tránh nút menu bị hiểu là số tiền.
+    """
+    context.user_data.pop('v13_deposit_id', None)
+    context.user_data.pop('v13_deposit_amount', None)
+    text = (update.effective_message.text or '').strip()
+    handlers = {
+        '👤 Hồ Sơ': ho_so,
+        '🔍 Xem TikTok': xem_tiktok,
+        '👥 Cấp Giới Thiệu': khu_vuc_leader,
+        '👑 Nâng Cấp Bậc': nang_cap,
+        '🛒 Dịch Vụ TikTok': v13_social_menu,
+        '🎯 Nhiệm Vụ': tasks_menu,
+        '🎁 Điểm Danh': diem_danh,
+        '🏆 BXH': bang_xep_hang,
+        '🎡 Vòng Quay': wheel,
+        '🎁 Đổi Quà': gift_menu,
+        '🎉 Sự Kiện': event_menu,
+        '🎧 Hỗ Trợ': ho_tro,
+        '🔐 Nhập CaptCha': captcha,
+        '🎛 QUẢN LÝ ADMIN': trang_quan_ly_admin,
+        '💰 Rút Tiền': rut_tien_bat_dau,
+    }
+    if text == '💳 Nạp Tiền':
+        return await v13_nap_tien_message_start(update, context)
+    fn = handlers.get(text)
+    if fn:
+        await fn(update, context)
+    return ConversationHandler.END
 
 
 # V13: giữ cấp nạp độc lập với cấp giới thiệu trong mọi thao tác cũ.
@@ -6179,7 +6461,8 @@ def _admin_user_detail_text_v13_sync(u):
         f"👤 <b>CHI TIẾT USER</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 <code>{u['id']}</code>\n👤 {h(u.get('ten',''))}\n"
         f"🔗 @{h(u.get('username') or '—')}\n"
-        f"💰 Số dư: <b>{int(u.get('so_du',0)):,}đ</b>\n"
+        f"💰 Số dư kiếm được: <b>{int(u.get('so_du',0)):,}đ</b>\n"
+        f"💳 Số dư nạp: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>\n"
         f"📥 Tổng nạp: <b>{int(u.get('total_deposited',0) or 0):,}đ</b>\n"
         f"👥 Cấp giới thiệu: <b>{h(u.get('cap_gioi_thieu') or _v13_rank_by_referral(u.get('gioi_thieu',0)))}</b>\n"
         f"💳 Cấp nạp: <b>{h(u.get('cap_nap') or 'Thành viên')}</b>\n"
@@ -6193,7 +6476,9 @@ def _admin_user_detail_text_v13_sync(u):
 
 def _admin_user_detail_keyboard(user_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 + Tiền",callback_data=f"admin_edit:cong:{user_id}"),InlineKeyboardButton("💸 - Tiền",callback_data=f"admin_edit:tru:{user_id}"),InlineKeyboardButton("💵 Đặt dư",callback_data=f"admin_edit:setbal:{user_id}")],
+        [InlineKeyboardButton("💰 + Kiếm",callback_data=f"admin_edit:cong:{user_id}"),InlineKeyboardButton("💸 - Kiếm",callback_data=f"admin_edit:tru:{user_id}")],
+        [InlineKeyboardButton("💰 Đặt số dư kiếm",callback_data=f"admin_edit:setbal:{user_id}"),InlineKeyboardButton("💳 Đặt số dư nạp",callback_data=f"admin_edit:setbalnap:{user_id}")],
+        [InlineKeyboardButton("💳 + Số dư nạp",callback_data=f"admin_edit:congnap:{user_id}"),InlineKeyboardButton("💳 - Số dư nạp",callback_data=f"admin_edit:trunap:{user_id}")],
         [InlineKeyboardButton("👥 Đổi cấp GT",callback_data=f"admin_edit:capgt:{user_id}"),InlineKeyboardButton("💳 Đổi cấp nạp",callback_data=f"admin_edit:capnap:{user_id}")],
         [InlineKeyboardButton("✏️ Tên",callback_data=f"admin_edit:name:{user_id}"),InlineKeyboardButton("🏦 Tài khoản",callback_data=f"admin_edit:account:{user_id}"),InlineKeyboardButton("👥 Giới thiệu",callback_data=f"admin_edit:gioithieu:{user_id}")],
         [InlineKeyboardButton("🎬 Video",callback_data=f"admin_edit:video:{user_id}"),InlineKeyboardButton("📅 Video ngày",callback_data=f"admin_edit:video_ngay:{user_id}"),InlineKeyboardButton("🎯 Reset ngày",callback_data=f"admin_edit:resetday:{user_id}")],
@@ -6328,7 +6613,8 @@ async def ho_so(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 <b>HỒ SƠ THÀNH VIÊN</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 ID: <code>{u['id']}</code>\n"
         f"👤 Tên: <b>{h(u['ten'])}</b>\n"
-        f"💰 Số dư: <b>{int(u['so_du']):,}đ</b>\n"
+        f"💰 <b>Số dư kiếm được</b>: <b>{int(u.get('so_du', 0) or 0):,}đ</b>\n"
+        f"💳 <b>Số dư nạp</b>: <b>{int(u.get('so_du_nap', 0) or 0):,}đ</b>\n"
         f"📥 Tổng nạp: <b>{int(u.get('total_deposited', 0) or 0):,}đ</b>\n\n"
         f"1️⃣ <b>CẤP GIỚI THIỆU</b>\n└ {h(ref)} • Cấp {ref_level}\n"
         f"└ 👥 {int(u.get('gioi_thieu', 0) or 0):,} người\n\n"
@@ -6446,7 +6732,7 @@ async def v13_social_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '🛒 <b>DỊCH VỤ MẠNG XÃ HỘI TIKTOK</b>\n'
         '━━━━━━━━━━━━━━━━━━━━\n'
         f'✨ Cấp dịch vụ: <b>{h(special)}</b>\n'
-        f'💰 Số dư: <b>{int(u.get("so_du", 0) or 0):,}đ</b>\n\n'
+        f'💳 Số dư dịch vụ: <b>{int(u.get("so_du_nap", 0) or 0):,}đ</b>\n💰 Số dư rút: <b>{int(u.get("so_du", 0) or 0):,}đ</b>\n\n'
         'Chọn dịch vụ bên dưới để xem giá, giới hạn và đặt đơn.'
     )
     if not rows:
@@ -6525,14 +6811,14 @@ async def _v15_service_input_core(update: Update, context: ContextTypes.DEFAULT_
         return DV_TIKTOK_INPUT
     now=now_vn().strftime('%d/%m/%Y %H:%M:%S'); oid=f"DV{u['id']}{int(time.time()*1000)}"
     with db() as conn:
-        changed=conn.execute('UPDATE users SET so_du=so_du-? WHERE id=? AND so_du>=?',(total,u['id'],total)).rowcount
+        changed=conn.execute('UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)-? WHERE id=? AND COALESCE(so_du_nap,0)>=?',(total,u['id'],total)).rowcount
         if changed!=1:
-            await update.message.reply_text(f"❌ Số dư không đủ. Cần {total:,}đ, hiện có {int(u['so_du']):,}đ.",reply_markup=menu_chinh(u['id']))
+            await update.message.reply_text(f"❌ Số dư không đủ. Cần {total:,}đ, hiện có {int(u.get('so_du_nap',0) or 0):,}đ trong số dư nạp.",reply_markup=menu_chinh(u['id']))
             return ConversationHandler.END
         conn.execute("INSERT INTO service_orders(order_id,user_id,service_id,link,quantity,total,status,created_at,updated_at) VALUES (?,?,?,?,?,?, 'pending',?,?)",(oid,u['id'],sid,link,qty,total,now,now))
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Nhận xử lý',callback_data=f'svc_admin:process:{oid}'),InlineKeyboardButton('❌ Từ chối + hoàn tiền',callback_data=f'svc_admin:reject:{oid}')]])
     await context.bot.send_message(chat_id=ADMIN_ID,text=f"🛒 <b>ĐƠN DỊCH VỤ TIKTOK</b>\n\n🆔 <code>{u['id']}</code>\n👤 {h(u['ten'])}\n📦 {h(r['name'])}\n🔗 {h(link)}\n🔢 SL: <b>{qty:,}</b>\n💵 Tổng: <b>{total:,}đ</b>\n✨ Cấp DV: <b>{h(_v15_rank_state(u)[2])}</b>\n🔔 <code>{oid}</code>",parse_mode='HTML',reply_markup=kb)
-    await update.message.reply_text(f"✅ <b>Đã tạo đơn {oid}</b>\n💵 Đã giữ {total:,}đ.\n⏳ Chờ Admin xử lý.",parse_mode='HTML',reply_markup=menu_chinh(u['id']))
+    await update.message.reply_text(f"✅ <b>Đã tạo đơn {oid}</b>\n💳 Đã giữ {total:,}đ từ số dư nạp.\n⏳ Chờ Admin xử lý.",parse_mode='HTML',reply_markup=menu_chinh(u['id']))
     context.user_data.pop('service_id',None)
     return ConversationHandler.END
 
@@ -6543,7 +6829,8 @@ def _admin_user_detail_text_v13_sync(u):
         f"👤 <b>CHI TIẾT USER</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 <code>{u['id']}</code>\n👤 {h(u.get('ten',''))}\n"
         f"🔗 @{h(u.get('username') or '—')}\n"
-        f"💰 Số dư: <b>{int(u.get('so_du',0)):,}đ</b>\n"
+        f"💰 Số dư kiếm được: <b>{int(u.get('so_du',0) or 0):,}đ</b>\n"
+        f"💳 Số dư nạp: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>\n"
         f"📥 Tổng nạp: <b>{int(u.get('total_deposited',0) or 0):,}đ</b>\n"
         f"1️⃣ GT: <b>{h(ref)}</b> (cấp {ref_level})\n"
         f"2️⃣ Nạp: <b>{h(dep)}</b> (cấp {dep_level})\n"
@@ -6759,16 +7046,28 @@ def build_application():
             CallbackQueryHandler(v13_nap_tien_start, pattern=r'^nap_tien_start$'),
             MessageHandler(filters.Regex(r'^💳 Nạp Tiền$'), v13_nap_tien_message_start),
         ],
-        states={NAP_TIEN_AMOUNT:[MessageHandler(filters.TEXT & ~filters.COMMAND, v13_nap_tien_amount)],
-                NAP_TIEN_RECEIPT:[MessageHandler(filters.PHOTO | filters.Document.ALL, v13_nap_tien_receipt)]},
-        fallbacks=[CommandHandler('cancel', cancel)], per_user=True, per_chat=True, allow_reentry=True
+        states={
+            NAP_TIEN_AMOUNT:[
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _nap_tien_interrupt_to_menu),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, v13_nap_tien_amount),
+            ],
+            NAP_TIEN_RECEIPT:[
+                MessageHandler(filters.PHOTO | filters.Document.ALL, v13_nap_tien_receipt),
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _nap_tien_interrupt_to_menu),
+            ],
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _nap_tien_interrupt_to_menu),
+        ],
+        per_user=True, per_chat=True, allow_reentry=True
     )
     service_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(v13_service_callback, pattern=r'^svc:\d+$')],
-        states={DV_TIKTOK_INPUT:[MessageHandler(filters.TEXT & ~filters.COMMAND, v13_service_input)]},
-        fallbacks=[CommandHandler('cancel', cancel)], per_user=True, per_chat=True, allow_reentry=True
+        states={DV_TIKTOK_INPUT:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v13_service_input)]},
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt)], per_user=True, per_chat=True, allow_reentry=True
     )
-    app.add_handler(nap_tien_conv, group=1)
+    app.add_handler(nap_tien_conv, group=0)
     app.add_handler(service_conv, group=1)
     app.add_handler(CallbackQueryHandler(v13_rank_type_callback, pattern=r'^rank_type:(ref|deposit|back)$'), group=0)
     app.add_handler(CallbackQueryHandler(v13_service_admin_callback, pattern=r'^svc_admin:(process|done|reject|refund):.+$'), group=0)
@@ -6776,9 +7075,9 @@ def build_application():
     admin_svc_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(v16_admin_service_callback, pattern=r'^admin_svc:(add|edit):\d*$|^admin_svc:add$')],
         states={
-            ADMIN_SVC_ADD:[MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_add_input)],
-            ADMIN_SVC_EDIT:[MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_edit_input)],
-            ADMIN_SVC_CONDITIONS:[MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_conditions_input)],
+            ADMIN_SVC_ADD:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_add_input)],
+            ADMIN_SVC_EDIT:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_edit_input)],
+            ADMIN_SVC_CONDITIONS:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_conditions_input)],
         },
         fallbacks=[CommandHandler('cancel', cancel)], per_user=True, per_chat=True, allow_reentry=True
     )
@@ -6803,13 +7102,14 @@ def build_application():
         ],
         states={
             NAP_GUI_ANH: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.PHOTO | (filters.TEXT & ~filters.COMMAND),
                     nhan_anh_chuyen_khoan,
                 ),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt)],
         per_user=True,
         per_chat=True,
         allow_reentry=True,
@@ -6829,13 +7129,14 @@ def build_application():
         ],
         states={
             NHAP_TAI_KHOAN: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     nhap_thong_tin_tai_khoan,
                 ),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt)],
         per_user=True,
         per_chat=True,
         allow_reentry=True,
@@ -6846,47 +7147,54 @@ def build_application():
         entry_points=[
             CallbackQueryHandler(
                 xu_ly_admin_callback,
-                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all|video|video_list|video_add|lich_su|log|settings|set:(min|max|daily|cooldown))|admin_history:\d+|admin_user:\d+|admin_reset_confirm:\d+|admin_edit:(cong|tru|setbal|cap|capgt|capnap|verify|unverify|captcha|reset|name|account|gioithieu|video|video_ngay|earned|withdrawn|resetday|lock|unlock):\d+|admin_video_del:\d+)$",
+                pattern=r"^(admin_(cong_tien|tru_tien|cong_tat_ca|gui_tb|tim_nguoi|ds_nguoi_all|video|video_list|video_add|lich_su|log|settings|set:(min|max|daily|cooldown))|admin_history:\d+|admin_user:\d+|admin_reset_confirm:\d+|admin_edit:(cong|tru|setbal|congnap|trunap|setbalnap|cap|capgt|capnap|verify|unverify|captcha|reset|name|account|gioithieu|video|video_ngay|earned|withdrawn|resetday|lock|unlock):\d+|admin_video_del:\d+)$",
             ),
         ],
         states={
             ADMIN_CONG_SO_DU: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_cong_tru,
                 ),
             ],
             ADMIN_TRU_SO_DU: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_cong_tru,
                 ),
             ],
             ADMIN_CONG_TAT_CA: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_cong_tru,
                 ),
             ],
             ADMIN_SUA_NGUOI: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_sua_nguoi,
                 ),
             ],
             ADMIN_TIM_NGUOI: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_tim_nguoi,
                 ),
             ],
             ADMIN_VIDEO_ADD: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_them_video,
                 ),
             ],
             ADMIN_GUI_TB: [
+                MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     admin_xu_ly_gui_tb,
