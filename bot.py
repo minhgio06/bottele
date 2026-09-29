@@ -115,19 +115,23 @@ def _make_webhook_handler(application, loop):
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]
+            LOGGER.info("Incoming POST path=%s", path)
             if path != WEBHOOK_PATH:
+                LOGGER.warning("Webhook path mismatch: got=%s expected=%s", path, WEBHOOK_PATH)
                 self._send(404, b"Not Found")
                 return
 
             if WEBHOOK_SECRET:
                 received = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
                 if received != WEBHOOK_SECRET:
+                    LOGGER.warning("Webhook secret mismatch")
                     self._send(403, b"Forbidden")
                     return
 
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > 5 * 1024 * 1024:
+                    LOGGER.warning("Invalid webhook body length=%s", length)
                     self._send(400, b"Invalid body")
                     return
                 raw = self.rfile.read(length)
@@ -137,34 +141,28 @@ def _make_webhook_handler(application, loop):
                     self._send(400, b"Invalid update")
                     return
 
-                LOGGER.info(
-                    "Webhook received update_id=%s type=%s",
-                    getattr(telegram_update, "update_id", None),
-                    (
-                        "message"
-                        if telegram_update.message
-                        else "callback_query"
-                        if telegram_update.callback_query
-                        else "other"
-                    ),
+                update_id = getattr(telegram_update, "update_id", None)
+                update_type = (
+                    "message" if telegram_update.message else
+                    "callback_query" if telegram_update.callback_query else
+                    "other"
                 )
+                LOGGER.info("Webhook received update_id=%s type=%s", update_id, update_type)
 
-                # Process the update directly on PTB's asyncio loop.
-                # This avoids relying on the internal update queue when using
-                # our custom Render webhook server.
+                # Process the update directly on PTB's event loop. This avoids
+                # relying on the internal update queue when using a custom HTTP server.
                 future = asyncio.run_coroutine_threadsafe(
-                    application.process_update(telegram_update),
-                    loop,
+                    application.process_update(telegram_update), loop
                 )
                 future.result(timeout=30)
-                LOGGER.info(
-                    "Webhook processed update_id=%s",
-                    getattr(telegram_update, "update_id", None),
-                )
+                LOGGER.info("Webhook processed update_id=%s", update_id)
                 self._send(200, b"OK")
             except Exception as exc:
                 LOGGER.exception("Webhook update error: %r", exc)
-                self._send(500, b"Internal Server Error")
+                try:
+                    self._send(500, b"Internal Server Error")
+                except Exception:
+                    pass
 
         def log_message(self, format, *args):
             return
