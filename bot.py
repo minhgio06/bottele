@@ -1365,6 +1365,7 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         updated = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        _wallet_ledger(conn, uid, 'earned', tien, int(updated['so_du'] or 0), 'video_reward', f'VIDEO:{message_id}', 'Thưởng hoàn thành video TikTok')
 
         # Hoa hồng F1/F2/F3 cũng nằm trong cùng transaction.
         ancestor_id = updated["ref_by"]
@@ -1384,6 +1385,8 @@ async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     "UPDATE users SET so_du=so_du+? WHERE id=?",
                     (commission, parent["id"]),
                 )
+                parent_now = conn.execute("SELECT so_du FROM users WHERE id=?", (parent['id'],)).fetchone()
+                _wallet_ledger(conn, parent['id'], 'earned', commission, int(parent_now['so_du'] or 0), 'referral_commission', f'VIDEO:{message_id}', 'Hoa hồng giới thiệu')
             ancestor_id = parent["ref_by"]
 
         video_id = context.user_data.get("watch_video_id")
@@ -3080,7 +3083,8 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                 )
                 if str(yc.get("deposit_type", "rank")) == "balance":
                     conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+?, total_deposited=COALESCE(total_deposited,0)+? WHERE id=?", (yc["gia"], yc["gia"], yc["user_id"]))
-                    user_now = conn.execute("SELECT total_deposited FROM users WHERE id=?", (yc["user_id"],)).fetchone()
+                    user_now = conn.execute("SELECT total_deposited,so_du_nap FROM users WHERE id=?", (yc["user_id"],)).fetchone()
+                    _wallet_ledger(conn, yc['user_id'], 'service', int(yc['gia']), int(user_now['so_du_nap'] or 0), 'deposit_approved', ma_nap, 'Nạp tiền được Admin duyệt')
                     new_rank = _v13_rank_by_deposit(user_now[0] if user_now else yc["gia"])
                     conn.execute("UPDATE users SET cap_nap=?, cap_bac=?, total_deposited=COALESCE(total_deposited,0) WHERE id=?", (new_rank,new_rank,yc["user_id"]))
                 else:
@@ -4429,6 +4433,8 @@ async def _approve_withdrawal_by_admin(q, context, request_id):
             conn.rollback(); await q.edit_message_text("❌ Số dư không đủ để duyệt."); return
         conn.execute("UPDATE withdrawals SET status='approved',approved_by=?,reviewed_at=? WHERE request_id=? AND status='pending'",
                      (q.from_user.id,now_vn().strftime('%d/%m/%Y %H:%M:%S'),request_id))
+        earned_after=conn.execute('SELECT so_du FROM users WHERE id=?',(yc['user_id'],)).fetchone()
+        _wallet_ledger(conn,yc['user_id'],'earned',-int(yc['so_tien']),int(earned_after['so_du'] or 0),'withdraw_approved',request_id,'Rút tiền được Admin duyệt')
         conn.commit()
     log_user_activity(yc['user_id'],'withdraw_approved',request_id)
     try:
@@ -6085,18 +6091,44 @@ def _menu_button_texts():
 
 
 async def _conversation_menu_interrupt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Không cho nút menu bị hiểu thành số tiền/link/tài khoản trong một luồng nhập."""
+    """Thoát luồng nhập và xử lý ngay nút menu vừa bấm.
+
+    ConversationHandler đã nhận update nên handler MessageHandler ở group sau
+    không được chạy lại. Vì vậy phải dispatch trực tiếp để nút không bị mất.
+    """
     text = (update.effective_message.text or '').strip()
     if text not in _menu_button_texts():
         return None
-    # Xóa dữ liệu tạm của các luồng đang nhập để không bị nối nhầm sang lệnh sau.
-    for key in ('v13_deposit_id', 'v13_deposit_amount', 'service_id', 'dang_lien_ket', 'dang_rut_tien', 'ma_nap_dang_xu_ly'):
+
+    for key in (
+        'v13_deposit_id', 'v13_deposit_amount', 'service_id',
+        'dang_lien_ket', 'dang_rut_tien', 'ma_nap_dang_xu_ly',
+        'admin_hanh_dong', 'admin_setting', 'admin_service_id',
+        'admin_service_mode', 'captcha_code', 'captcha_created_at',
+    ):
         context.user_data.pop(key, None)
-    await update.message.reply_text(
-        '↩️ <b>Đã thoát thao tác đang nhập.</b>\n\n'
-        'Chọn lại chức năng bạn muốn thực hiện ở menu bên dưới.',
-        parse_mode='HTML', reply_markup=menu_chinh(update.effective_user.id)
-    )
+
+    handlers = {
+        '👤 Hồ Sơ': ho_so,
+        '🔍 Xem TikTok': xem_tiktok,
+        '👥 Cấp Giới Thiệu': khu_vuc_leader,
+        '👑 Nâng Cấp Bậc': nang_cap,
+        '💳 Nạp Tiền': v13_nap_tien_message_start,
+        '💰 Rút Tiền': rut_tien_bat_dau,
+        '🛒 Dịch Vụ TikTok': v13_social_menu,
+        '🎯 Nhiệm Vụ': tasks_menu,
+        '🎁 Điểm Danh': diem_danh,
+        '🏆 BXH': bang_xep_hang,
+        '🎡 Vòng Quay': wheel,
+        '🎁 Đổi Quà': gift_menu,
+        '🎉 Sự Kiện': event_menu,
+        '🎧 Hỗ Trợ': ho_tro,
+        '🔐 Nhập CaptCha': captcha,
+        '🎛 QUẢN LÝ ADMIN': trang_quan_ly_admin,
+    }
+    fn = handlers.get(text)
+    if fn is not None:
+        await fn(update, context)
     return ConversationHandler.END
 
 
@@ -6120,75 +6152,182 @@ async def v13_nap_tien_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return NAP_TIEN_AMOUNT
 
 async def v13_nap_tien_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw = (update.effective_message.text or '').strip()
-    if not re.fullmatch(r'[0-9\s.,₫đĐ]+', raw):
+    """Nhận số tiền nạp với xử lý lỗi đầy đủ, không để lỗi DB/QR làm bot im lặng."""
+    try:
+        raw = (update.effective_message.text or '').strip()
+        # Chỉ nhận số tiền; không nhận tên nút/menu trong state này.
+        if not re.fullmatch(r'[0-9\s.,₫đĐ]+', raw):
+            await update.message.reply_text(
+                "❌ Số tiền không hợp lệ.\n\nVí dụ: <code>50000</code>, <code>50.000đ</code> hoặc <code>50,000đ</code>.",
+                parse_mode='HTML')
+            return NAP_TIEN_AMOUNT
+
+        digits = re.sub(r'\D', '', raw)
+        if not digits:
+            await update.message.reply_text("❌ Vui lòng nhập số tiền bằng số.", parse_mode='HTML')
+            return NAP_TIEN_AMOUNT
+        amount = int(digits)
+        if amount < 10000:
+            await update.message.reply_text(
+                "❌ Số tiền nạp tối thiểu là <b>10.000đ</b>.\n\nVui lòng nhập lại:",
+                parse_mode='HTML')
+            return NAP_TIEN_AMOUNT
+        if amount > 2_000_000_000:
+            await update.message.reply_text(
+                "❌ Số tiền nạp tối đa là <b>2.000.000.000đ</b>.\n\nVui lòng nhập số nhỏ hơn.",
+                parse_mode='HTML')
+            return NAP_TIEN_AMOUNT
+
+        u = get_user(update.effective_user.id)
+        if not u:
+            await update.message.reply_text("❌ Không tìm thấy tài khoản. Vui lòng bấm /start.")
+            return ConversationHandler.END
+
+        # Mã duy nhất hơn, tránh trùng khi người dùng tạo 2 đơn liên tiếp.
+        rid = f"NAP{u['id']}{int(time.time()*1000)}{uuid.uuid4().hex[:6].upper()}"
+        bank, owner, account, _ = _deposit_bank_info()
+        if not account:
+            await update.message.reply_text(
+                "❌ Hệ thống chưa cấu hình số tài khoản nhận tiền. Vui lòng liên hệ Admin.",
+                reply_markup=menu_chinh(u['id']))
+            return ConversationHandler.END
+
+        # Một số DB cũ có thể chưa chạy migration deposit_type. Tự đảm bảo cột trước khi INSERT.
+        try:
+            with db() as conn:
+                _safe_add_column(conn, 'deposits', 'deposit_type', "TEXT NOT NULL DEFAULT 'rank'")
+                _safe_add_column(conn, 'deposits', 'approved_by', 'BIGINT')
+                _safe_add_column(conn, 'deposits', 'approved_at', 'TEXT')
+                conn.execute(
+                    "INSERT INTO deposits(request_id,user_id,ten,goi_key,cap_moi,gia,thoi_gian,status,deposit_type) VALUES (?,?,?,?,?,?,?,'pending','balance')",
+                    (rid, u['id'], u['ten'], 'nap_tien', u.get('cap_nap','Thành viên'), amount, now_vn().strftime('%d/%m/%Y %H:%M'))
+                )
+        except Exception as exc:
+            LOGGER.exception('Lỗi tạo đơn nạp tiền %s', rid)
+            await update.message.reply_text(
+                "❌ <b>Không tạo được đơn nạp tiền.</b>\n\n"
+                "Hệ thống gặp lỗi khi lưu yêu cầu. Vui lòng thử lại sau vài giây.\n"
+                "Nếu vẫn lỗi, hãy báo Admin.",
+                parse_mode='HTML', reply_markup=menu_chinh(u['id']))
+            return ConversationHandler.END
+
+        context.user_data['v13_deposit_id'] = rid
+        context.user_data['v13_deposit_amount'] = amount
+
+        qr = _vietqr_url(amount, rid)
+        kb = _deposit_copy_keyboard(rid, account, rid)
+        text = (
+            f"💳 <b>XÁC NHẬN NẠP TIỀN</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 Mã nạp: <code>{h(rid)}</code>\n"
+            f"💵 Số tiền: <b>{amount:,}đ</b>\n\n"
+            f"🏦 Ngân hàng: <b>{h(bank)}</b>\n"
+            f"👤 Chủ TK: <b>{h(owner)}</b>\n"
+            f"🔢 Số TK: <code>{h(account)}</code>\n"
+            f"📝 Nội dung CK: <code>{h(rid)}</code>\n\n"
+            "📋 <b>STK và nội dung chuyển khoản có thể sao chép.</b>\n"
+            "📷 Quét mã QR để chuyển khoản nhanh.\n\n"
+            "⚠️ Chuyển <b>đúng số tiền</b> và <b>đúng nội dung</b>, sau đó bấm <b>📩 Tôi đã chuyển khoản</b> và gửi biên lai.\n\n"
+            "💳 Khoản nạp sau khi Admin duyệt sẽ vào <b>Số dư dịch vụ</b> và không thể rút."
+        )
+        try:
+            if qr:
+                await update.message.reply_photo(photo=qr, caption=text, parse_mode='HTML', reply_markup=kb)
+            else:
+                await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
+        except Exception:
+            # QR có thể lỗi mạng; vẫn gửi được thông tin chuyển khoản dạng text.
+            LOGGER.exception('Không gửi được QR nạp tiền %s', rid)
+            await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
+        return NAP_TIEN_RECEIPT
+    except Exception:
+        LOGGER.exception('Unhandled error trong v13_nap_tien_amount')
         await update.message.reply_text(
-            "❌ Số tiền không hợp lệ. Ví dụ: <code>50000</code> hoặc <code>50.000đ</code>.",
-            parse_mode='HTML')
-        return NAP_TIEN_AMOUNT
-    digits = re.sub(r'\D', '', raw)
-    amount = int(digits) if digits else 0
-    if amount < 10000:
-        await update.message.reply_text("❌ Số tiền nạp tối thiểu là <b>10.000đ</b>. Nhập lại:", parse_mode='HTML')
-        return NAP_TIEN_AMOUNT
-    if amount > 2_000_000_000:
-        await update.message.reply_text("❌ Số tiền nạp vượt giới hạn cho phép. Vui lòng nhập số nhỏ hơn.", parse_mode='HTML')
-        return NAP_TIEN_AMOUNT
-    u=get_user(update.effective_user.id)
-    if not u: return ConversationHandler.END
-    rid=f"NAP{u['id']}{int(time.time()*1000)}"
-    context.user_data['v13_deposit_id']=rid
-    bank, owner, account, _ = _deposit_bank_info()
-    with db() as conn:
-        conn.execute("INSERT INTO deposits(request_id,user_id,ten,goi_key,cap_moi,gia,thoi_gian,status,deposit_type) VALUES (?,?,?,?,?,?,?,'pending','balance')",
-                     (rid,u['id'],u['ten'],'nap_tien',u.get('cap_nap','Thành viên'),amount,now_vn().strftime('%d/%m/%Y %H:%M')))
-    qr = _vietqr_url(amount, rid)
-    kb = _deposit_copy_keyboard(rid, account, rid)
-    text = (
-        f"💳 <b>XÁC NHẬN NẠP TIỀN</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"📋 Mã nạp: <code>{h(rid)}</code>\n"
-        f"💵 Số tiền: <b>{amount:,}đ</b>\n\n"
-        f"🏦 Ngân hàng: <b>{h(bank)}</b>\n"
-        f"👤 Chủ TK: <b>{h(owner)}</b>\n"
-        f"🔢 Số TK: <code>{h(account)}</code>\n"
-        f"📝 Nội dung CK: <code>{h(rid)}</code>\n\n"
-        "📋 <b>Thông tin trên có thể sao chép.</b>\n"
-        "📷 Quét mã QR để chuyển khoản nhanh.\n\n"
-        "⚠️ Chuyển <b>đúng số tiền</b> và <b>đúng nội dung</b>, sau đó gửi ảnh biên lai tại đây.\n\n"
-        "💳 Khoản nạp sau khi duyệt sẽ vào <b>Số dư dịch vụ</b> và không thể rút."
-    )
-    if qr:
-        await update.message.reply_photo(photo=qr, caption=text, parse_mode='HTML', reply_markup=kb)
-    else:
-        await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb)
-    context.user_data['v13_deposit_amount']=amount
-    return NAP_TIEN_RECEIPT
+            "❌ Có lỗi khi xử lý số tiền nạp. Vui lòng thử lại bằng /start → 💳 Nạp Tiền.",
+            reply_markup=menu_chinh(update.effective_user.id))
+        context.user_data.pop('v13_deposit_id', None)
+        context.user_data.pop('v13_deposit_amount', None)
+        return ConversationHandler.END
+
+async def v13_da_chuyen_khoan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xác nhận đã chuyển khoản, giữ nguyên state để nhận biên lai."""
+    q = update.callback_query
+    rid = context.user_data.get('v13_deposit_id')
+    if not rid:
+        await q.answer('❌ Phiên nạp tiền đã hết. Vui lòng bấm Nạp Tiền lại.', show_alert=True)
+        return ConversationHandler.END
+    try:
+        await q.answer()
+        with db() as conn:
+            yc = conn.execute(
+                "SELECT request_id, gia, status FROM deposits WHERE request_id=? AND user_id=?",
+                (rid, update.effective_user.id),
+            ).fetchone()
+        if not yc or yc['status'] != 'pending':
+            context.user_data.pop('v13_deposit_id', None)
+            context.user_data.pop('v13_deposit_amount', None)
+            await q.message.reply_text(
+                '❌ Đơn nạp không còn hiệu lực. Vui lòng tạo đơn nạp mới.',
+                reply_markup=menu_chinh(update.effective_user.id),
+            )
+            return ConversationHandler.END
+        await q.message.reply_text(
+            f"📩 <b>ĐÃ CHUYỂN KHOẢN</b>\n\n"
+            f"💵 Số tiền: <b>{int(yc['gia']):,}đ</b>\n"
+            f"🔔 Mã nạp: <code>{h(rid)}</code>\n\n"
+            "📸 Bây giờ hãy gửi <b>ảnh hoặc file biên lai</b> chuyển khoản để Admin kiểm tra.",
+            parse_mode='HTML',
+        )
+        return NAP_TIEN_RECEIPT
+    except Exception:
+        LOGGER.exception('Lỗi xác nhận đã chuyển khoản %s', rid)
+        await q.message.reply_text('❌ Không kiểm tra được đơn nạp. Vui lòng thử lại.', reply_markup=menu_chinh(update.effective_user.id))
+        return ConversationHandler.END
+
 
 async def v13_nap_tien_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rid=context.user_data.get('v13_deposit_id')
-    if not rid: return ConversationHandler.END
-    photo=update.effective_message.photo[-1] if update.effective_message.photo else None
-    document=update.effective_message.document if update.effective_message.document else None
+    rid = context.user_data.get('v13_deposit_id')
+    if not rid:
+        await update.message.reply_text('❌ Phiên nạp tiền đã hết. Vui lòng bấm Nạp Tiền lại.', reply_markup=menu_chinh(update.effective_user.id))
+        return ConversationHandler.END
+    photo = update.effective_message.photo[-1] if update.effective_message.photo else None
+    document = update.effective_message.document if update.effective_message.document else None
     file_id = photo.file_id if photo else (document.file_id if document else None)
     if not file_id:
-        await update.message.reply_text("❌ Vui lòng gửi ảnh hoặc file biên lai chuyển khoản.")
+        await update.message.reply_text('❌ Vui lòng gửi ảnh hoặc file biên lai chuyển khoản.')
         return NAP_TIEN_RECEIPT
-    with db() as conn:
-        yc=conn.execute("SELECT * FROM deposits WHERE request_id=? AND status='pending'",(rid,)).fetchone()
-        if not yc:
-            await update.message.reply_text("❌ Đơn nạp không còn hiệu lực.",reply_markup=menu_chinh(update.effective_user.id)); return ConversationHandler.END
-        conn.execute("UPDATE deposits SET photo_file_id=? WHERE request_id=?",(file_id,rid))
-    caption=(f"📥 <b>ĐƠN NẠP TIỀN</b>\n\n🆔 <code>{yc['user_id']}</code>\n👤 {h(yc['ten'])}\n"
-             f"💵 {yc['gia']:,}đ\n🔔 <code>{h(rid)}</code>\n📌 Loại: Nạp số dư dịch vụ")
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton("✅ DUYỆT",callback_data=f"duyet_nap_ok:{rid}"),InlineKeyboardButton("❌ TỪ CHỐI",callback_data=f"duyet_nap_no:{rid}")]])
-    
-    if photo:
-        await context.bot.send_photo(chat_id=ADMIN_ID,photo=file_id,caption=caption,parse_mode='HTML',reply_markup=kb)
-    else:
-        await context.bot.send_document(chat_id=ADMIN_ID,document=file_id,caption=caption,parse_mode='HTML',reply_markup=kb)
-    await update.message.reply_text("✅ <b>Đã gửi biên lai!</b>\n\n⏳ Đơn đang chờ Admin duyệt.\n💳 Khi duyệt, tiền sẽ cộng vào <b>Số dư dịch vụ</b> để sử dụng cho Dịch Vụ TikTok.",parse_mode='HTML',reply_markup=menu_chinh(update.effective_user.id))
-    context.user_data.pop('v13_deposit_id',None); context.user_data.pop('v13_deposit_amount',None)
-    return ConversationHandler.END
+    try:
+        with db() as conn:
+            yc = conn.execute(
+                "SELECT * FROM deposits WHERE request_id=? AND status='pending'", (rid,)
+            ).fetchone()
+            if not yc:
+                await update.message.reply_text('❌ Đơn nạp không còn hiệu lực.', reply_markup=menu_chinh(update.effective_user.id))
+                return ConversationHandler.END
+            conn.execute("UPDATE deposits SET photo_file_id=? WHERE request_id=? AND status='pending'", (file_id, rid))
+        caption = (
+            f"📥 <b>ĐƠN NẠP TIỀN</b>\n\n🆔 <code>{yc['user_id']}</code>\n👤 {h(yc['ten'])}\n"
+            f"💵 {yc['gia']:,}đ\n🔔 <code>{h(rid)}</code>\n📌 Loại: Nạp số dư dịch vụ"
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton('✅ DUYỆT', callback_data=f'duyet_nap_ok:{rid}'),
+            InlineKeyboardButton('❌ TỪ CHỐI', callback_data=f'duyet_nap_no:{rid}')
+        ]])
+        if photo:
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=file_id, caption=caption, parse_mode='HTML', reply_markup=kb)
+        else:
+            await context.bot.send_document(chat_id=ADMIN_ID, document=file_id, caption=caption, parse_mode='HTML', reply_markup=kb)
+        await update.message.reply_text(
+            '✅ <b>Đã gửi biên lai!</b>\n\n⏳ Đơn đang chờ Admin duyệt.\n💳 Khi duyệt, tiền sẽ cộng vào <b>Số dư dịch vụ</b>.',
+            parse_mode='HTML', reply_markup=menu_chinh(update.effective_user.id))
+        context.user_data.pop('v13_deposit_id', None)
+        context.user_data.pop('v13_deposit_amount', None)
+        return ConversationHandler.END
+    except Exception:
+        LOGGER.exception('Lỗi nhận biên lai nạp tiền %s', rid)
+        await update.message.reply_text(
+            '❌ Không thể gửi biên lai lúc này. Đơn vẫn được giữ lại, vui lòng thử gửi lại sau.',
+            reply_markup=menu_chinh(update.effective_user.id))
+        return NAP_TIEN_RECEIPT
 
 
 async def v13_social_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6243,6 +6382,8 @@ async def v13_service_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if changed!=1:
             await update.message.reply_text(f"❌ Số dư không đủ. Cần {total:,}đ, hiện có {int(u.get('so_du_nap',0) or 0):,}đ trong số dư nạp.",reply_markup=menu_chinh(u['id'])); return ConversationHandler.END
         conn.execute("INSERT INTO service_orders(order_id,user_id,service_id,link,quantity,total,status,created_at,updated_at) VALUES (?,?,?,?,?,?, 'pending',?,?)",(oid,u['id'],sid,link,qty,total,now,now))
+        service_after = conn.execute('SELECT so_du_nap FROM users WHERE id=?',(u['id'],)).fetchone()
+        _wallet_ledger(conn, u['id'], 'service', -total, int(service_after['so_du_nap'] or 0), 'service_order', oid, f'Thanh toán dịch vụ: {r["name"]}')
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Nhận xử lý',callback_data=f'svc_admin:process:{oid}'),InlineKeyboardButton('❌ Từ chối + hoàn tiền',callback_data=f'svc_admin:reject:{oid}')]])
     await context.bot.send_message(chat_id=ADMIN_ID,text=f"🛒 <b>ĐƠN DỊCH VỤ TIKTOK</b>\n\n🆔 <code>{u['id']}</code>\n👤 {h(u['ten'])}\n📦 {h(r['name'])}\n🔗 {h(link)}\n🔢 SL: <b>{qty:,}</b>\n💵 Tổng: <b>{total:,}đ</b>\n🔔 <code>{oid}</code>",parse_mode='HTML',reply_markup=kb)
     await update.message.reply_text(f"✅ <b>Đã tạo đơn {oid}</b>\n💳 Đã giữ {total:,}đ từ số dư nạp.\n⏳ Chờ Admin xử lý.",parse_mode='HTML',reply_markup=menu_chinh(u['id']))
@@ -6264,7 +6405,10 @@ async def v13_service_admin_callback(update: Update, context: ContextTypes.DEFAU
             conn.execute("UPDATE service_orders SET status='done',admin_id=?,updated_at=? WHERE order_id=? AND status='processing'",(q.from_user.id,now,oid)); msg='✅ Đơn đã HOÀN TẤT.'
         elif action in ('reject','refund') and row['status'] in ('pending','processing'):
             conn.execute("UPDATE service_orders SET status='refunded',admin_id=?,updated_at=?,note=? WHERE order_id=? AND status=?",(q.from_user.id,now,'Admin hoàn tiền',oid,row['status']))
-            conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+? WHERE id=?",(row['total'],row['user_id'])); msg=f"↩️ Đã hoàn {int(row['total']):,}đ."
+            conn.execute("UPDATE users SET so_du_nap=COALESCE(so_du_nap,0)+? WHERE id=?",(row['total'],row['user_id']));
+            service_after=conn.execute('SELECT so_du_nap FROM users WHERE id=?',(row['user_id'],)).fetchone()
+            _wallet_ledger(conn,row['user_id'],'service',int(row['total']),int(service_after['so_du_nap'] or 0),'service_refund',row['order_id'],'Hoàn tiền đơn dịch vụ')
+            msg=f"↩️ Đã hoàn {int(row['total']):,}đ."
         else:
             await q.answer('Trạng thái đơn không phù hợp.',show_alert=True); return
     try: await context.bot.send_message(chat_id=row['user_id'],text=msg)
@@ -6711,7 +6855,7 @@ async def v13_social_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Bạn chưa đủ điều kiện sử dụng hệ thống dịch vụ mạng xã hội.\n\n'
             f'{_v15_special_progress(u)}\n\n'
             '📌 ' + ' và '.join(_v15_special_condition_lines()) + ' để mở.',
-            parse_mode='HTML', reply_markup=menu_chinh(u['id'])
+        parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Lịch sử ví', callback_data='wallet_history'), InlineKeyboardButton('📊 Thống kê', callback_data='wallet_stats')]])
         )
         return
     with db() as conn:
@@ -7032,6 +7176,113 @@ async def v16_admin_service_edit_input(update: Update, context: ContextTypes.DEF
     await update.message.reply_text('✅ Đã cập nhật dịch vụ.' if changed else '❌ Không tìm thấy dịch vụ.')
     return ConversationHandler.END
 
+
+# ============================================================
+# V17: SỔ CÁI VÍ + LỊCH SỬ GIAO DỊCH
+# ============================================================
+def _wallet_ledger(conn, user_id, wallet_type, delta, balance_after, kind, reference_id='', note=''):
+    try:
+        conn.execute(
+            "INSERT INTO wallet_ledger (user_id,wallet_type,delta,balance_after,kind,reference_id,note,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (int(user_id), str(wallet_type), int(delta), int(balance_after), str(kind), str(reference_id or ''), str(note or ''), now_vn().strftime('%d/%m/%Y %H:%M:%S')),
+        )
+    except Exception:
+        LOGGER.exception('wallet_ledger write failed user=%s kind=%s ref=%s', user_id, kind, reference_id)
+
+def _wallet_ledger_label(kind):
+    return {
+        'video_reward':'🎬 Thưởng xem TikTok',
+        'referral_commission':'👥 Hoa hồng giới thiệu',
+        'deposit_approved':'💳 Nạp tiền',
+        'service_order':'🛒 Thanh toán dịch vụ',
+        'service_refund':'↩️ Hoàn tiền dịch vụ',
+        'withdraw_approved':'💸 Rút tiền',
+        'admin_adjust':'🛠 Điều chỉnh Admin',
+    }.get(kind, '🧾 Giao dịch ví')
+
+async def wallet_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id
+    u=get_user(uid)
+    if not u:
+        if update.callback_query:
+            await update.callback_query.answer('❌ Không tìm thấy tài khoản.', show_alert=True)
+        else:
+            await update.message.reply_text('Vui lòng gõ /start trước.')
+        return
+    with db() as conn:
+        rows=conn.execute('SELECT * FROM wallet_ledger WHERE user_id=? ORDER BY id DESC LIMIT 30',(uid,)).fetchall()
+    lines=['📜 <b>LỊCH SỬ VÍ</b>','━━━━━━━━━━━━━━━━━━━━',
+           f"💰 Ví kiếm được: <b>{int(u.get('so_du',0) or 0):,}đ</b> <i>(được rút)</i>",
+           f"💳 Ví dịch vụ: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b> <i>(chỉ dùng dịch vụ)</i>",'']
+    if not rows:
+        lines.append('📭 Chưa có giao dịch.')
+    else:
+        for r in rows:
+            delta=int(r['delta'] or 0); sign='+' if delta>=0 else ''
+            wallet='💰' if r['wallet_type']=='earned' else '💳'
+            label=_wallet_ledger_label(r['kind'])
+            ref=f" · <code>{h(r['reference_id'])}</code>" if r['reference_id'] else ''
+            lines.append(f"{wallet} {label}\n└ <b>{sign}{delta:,}đ</b> · {h(r['created_at'])}{ref}")
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Làm mới',callback_data='wallet_history')],
+                             [InlineKeyboardButton('🏠 Menu chính',callback_data='wallet_home')]])
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text('\n'.join(lines),parse_mode='HTML',reply_markup=kb)
+    else:
+        await update.message.reply_text('\n'.join(lines),parse_mode='HTML',reply_markup=kb)
+
+async def wallet_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q=update.callback_query
+    await q.answer()
+    uid=q.from_user.id
+    u=get_user(uid)
+    if not u:
+        await q.answer('❌ Không tìm thấy tài khoản.', show_alert=True); return
+    with db() as conn:
+        dep=conn.execute("SELECT COUNT(*) c, COALESCE(SUM(gia),0) total FROM deposits WHERE user_id=? AND status='approved'",(uid,)).fetchone()
+        wd=conn.execute("SELECT COUNT(*) c, COALESCE(SUM(so_tien),0) total FROM withdrawals WHERE user_id=? AND status='approved'",(uid,)).fetchone()
+        svc=conn.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) total FROM service_orders WHERE user_id=? AND status NOT IN ('rejected','refunded')",(uid,)).fetchone()
+    text=(
+        '📊 <b>THỐNG KÊ TÀI KHOẢN</b>\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        f"🎬 Video đã nhận thưởng: <b>{int(u.get('video_da_xem',0) or 0):,}</b>\n"
+        f"👥 Người giới thiệu: <b>{int(u.get('gioi_thieu',0) or 0):,}</b>\n"
+        f"💰 Tổng kiếm được: <b>{int(u.get('total_earned',0) or 0):,}đ</b>\n"
+        f"💸 Tổng đã rút: <b>{int(u.get('total_withdrawn',0) or 0):,}đ</b>\n"
+        f"📥 Lần nạp thành công: <b>{int(dep['c'] or 0)}</b> · {int(dep['total'] or 0):,}đ\n"
+        f"🛒 Đơn dịch vụ: <b>{int(svc['c'] or 0)}</b> · {int(svc['total'] or 0):,}đ\n\n"
+        f"💰 Số dư rút: <b>{int(u.get('so_du',0) or 0):,}đ</b>\n"
+        f"💳 Số dư dịch vụ: <b>{int(u.get('so_du_nap',0) or 0):,}đ</b>"
+    )
+    await q.edit_message_text(text,parse_mode='HTML',reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton('📜 Lịch sử ví',callback_data='wallet_history')],
+        [InlineKeyboardButton('🏠 Menu chính',callback_data='wallet_home')]
+    ]))
+
+async def wallet_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q=update.callback_query; await q.answer()
+    await q.message.reply_text('🏠 Menu chính:',reply_markup=menu_chinh(q.from_user.id))
+
+async def wallet_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await wallet_history(update, context)
+
+def _wallet_history_migration(conn):
+    if DATABASE_URL:
+        conn.execute("CREATE TABLE IF NOT EXISTS wallet_ledger (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, wallet_type TEXT NOT NULL, delta BIGINT NOT NULL, balance_after BIGINT NOT NULL, kind TEXT NOT NULL, reference_id TEXT, note TEXT, created_at TEXT NOT NULL)")
+    else:
+        conn.execute("CREATE TABLE IF NOT EXISTS wallet_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT NOT NULL, wallet_type TEXT NOT NULL, delta BIGINT NOT NULL, balance_after BIGINT NOT NULL, kind TEXT NOT NULL, reference_id TEXT, note TEXT, created_at TEXT NOT NULL)")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id,id DESC)')
+
+_wallet_prev_init_db_v17=init_db
+def init_db():
+    _wallet_prev_init_db_v17()
+    try:
+        with db() as conn:
+            _wallet_history_migration(conn)
+    except Exception:
+        LOGGER.exception('V17 wallet ledger migration warning')
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -7052,12 +7303,14 @@ def build_application():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, v13_nap_tien_amount),
             ],
             NAP_TIEN_RECEIPT:[
-                MessageHandler(filters.PHOTO | filters.Document.ALL, v13_nap_tien_receipt),
+                CallbackQueryHandler(v13_da_chuyen_khoan_callback, pattern=r'^dachuyen:.+$'),
                 MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _nap_tien_interrupt_to_menu),
+                MessageHandler(filters.PHOTO | filters.Document.ALL, v13_nap_tien_receipt),
             ],
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
+            CommandHandler('start', start),
             MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _nap_tien_interrupt_to_menu),
         ],
         per_user=True, per_chat=True, allow_reentry=True
@@ -7109,7 +7362,7 @@ def build_application():
                 ),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt)],
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt)],
         per_user=True,
         per_chat=True,
         allow_reentry=True,
@@ -7415,6 +7668,11 @@ def build_application():
     except Exception:
         LOGGER.exception("Không khởi tạo được scheduled notification job")
 
+    app.add_handler(CallbackQueryHandler(wallet_history, pattern=r'^wallet_history$'), group=0)
+    app.add_handler(CallbackQueryHandler(wallet_home, pattern=r'^wallet_home$'), group=0)
+    app.add_handler(CallbackQueryHandler(wallet_stats, pattern=r'^wallet_stats$'), group=0)
+    app.add_handler(CommandHandler('lichsu', wallet_summary_command), group=0)
+    app.add_handler(CommandHandler('history', wallet_summary_command), group=0)
     app.add_error_handler(error_handler)
     return app
 
