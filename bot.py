@@ -3334,78 +3334,25 @@ def build_application():
     return app
 
 
-async def run_bot():
-    """
-    Production startup for Render using Telegram Webhook.
-
-    Render Free can sleep when there is no inbound HTTP traffic. Using a
-    webhook lets Telegram wake the Render Web Service when a user sends an
-    update, instead of relying on long polling.
-    """
+def run_bot():
+    """Production webhook startup using python-telegram-bot's built-in server."""
     application = build_application()
-    await application.initialize()
+    public_url = get_public_webhook_url()
+    LOGGER.info("Starting built-in Telegram webhook: %s", public_url)
+    LOGGER.info("Webhook listen=0.0.0.0 port=%s path=%s", RENDER_PORT, WEBHOOK_PATH)
 
-    loop = asyncio.get_running_loop()
-    webhook_server = None
-
-    try:
-        await application.start()
-
-        # Start our HTTP server first so Telegram has a live endpoint before
-        # the webhook is registered. /health is also available for Render.
-        webhook_server = start_webhook_server(application, loop)
-
-        public_url = get_public_webhook_url()
-        LOGGER.info("Setting Telegram webhook: %s", public_url)
-
-        await application.bot.set_webhook(
-            url=public_url,
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False,
-            secret_token=WEBHOOK_SECRET or None,
-        )
-
-        webhook_info = await application.bot.get_webhook_info()
-        LOGGER.info(
-            "Telegram webhook active: url=%s pending=%s last_error=%s",
-            webhook_info.url,
-            webhook_info.pending_update_count,
-            webhook_info.last_error_message,
-        )
-
-        stop_event = asyncio.Event()
-
-        def request_shutdown():
-            if not stop_event.is_set():
-                LOGGER.info("Nhận tín hiệu dừng, đang shutdown an toàn...")
-                stop_event.set()
-
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
-                loop.add_signal_handler(sig, request_shutdown)
-            except (NotImplementedError, RuntimeError):
-                pass
-
-        LOGGER.info("Bot đang chạy bằng Telegram Webhook.")
-        await stop_event.wait()
-
-    finally:
-        if webhook_server is not None:
-            try:
-                webhook_server.shutdown()
-                webhook_server.server_close()
-            except Exception:
-                pass
-
-        try:
-            await application.bot.delete_webhook(drop_pending_updates=False)
-        except Exception as exc:
-            LOGGER.warning("Không xoá được webhook khi shutdown: %r", exc)
-
-        try:
-            await application.stop()
-        finally:
-            await application.shutdown()
+    # PTB's built-in webhook server handles Telegram POST requests directly
+    # and avoids the custom ThreadingHTTPServer/update-loop bridge.
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=RENDER_PORT,
+        url_path=WEBHOOK_PATH.lstrip("/"),
+        webhook_url=public_url,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+        secret_token=WEBHOOK_SECRET or None,
+        stop_signals=(signal.SIGTERM, signal.SIGINT),
+    )
 
 
 if __name__ == "__main__":
