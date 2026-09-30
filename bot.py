@@ -45,7 +45,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFKQg9_SpdAYo1iAqYwTfueD6TOifJZvE8").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -4040,6 +4040,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     LOGGER.exception("Unhandled Telegram error", exc_info=context.error)
+    try:
+        if isinstance(update, Update):
+            if update.callback_query:
+                await update.callback_query.answer("⚠️ Có lỗi tạm thời. Vui lòng thử lại.", show_alert=True)
+            elif update.effective_message:
+                await update.effective_message.reply_text("⚠️ Có lỗi tạm thời. Vui lòng thử lại hoặc bấm /start.")
+    except Exception:
+        LOGGER.exception("Could not send user-facing error message")
 
 
 
@@ -5487,7 +5495,14 @@ async def admin_ext_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def job_process_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
     now=now_vn(); hhmm=now.strftime('%H:%M'); today=now.strftime('%d/%m/%Y')
-    with db() as conn: rows=conn.execute("SELECT * FROM scheduled_notifications WHERE active=1 AND send_time=?",(hhmm,)).fetchall()
+    try:
+        with db() as conn: rows=conn.execute("SELECT * FROM scheduled_notifications WHERE active=1 AND send_time=?",(hhmm,)).fetchall()
+    except Exception:
+        LOGGER.exception("Scheduled notification query failed; attempting schema self-heal")
+        try:
+            _v172_create_critical_tables(); _v172_add_columns()
+        except Exception: LOGGER.exception("Scheduled notification self-heal failed")
+        return
     for row in rows:
         if row['last_sent_date']==today: continue
         target=row['target']; users=[]
@@ -6437,13 +6452,24 @@ def _v13_admin_dashboard_keyboard():
 
 
 async def _v13_admin_dashboard_content():
-    with db() as conn:
-        u=conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        bal=conn.execute('SELECT COALESCE(SUM(so_du),0) FROM users').fetchone()[0]
-        wd=conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
-        dep=conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
-        svc=conn.execute("SELECT COUNT(*) FROM service_orders WHERE status='pending'").fetchone()[0]
-        today=conn.execute("SELECT COUNT(*) FROM users WHERE ngay_vao=?",(today_vn(),)).fetchone()[0]
+    try:
+        with db() as conn:
+            u=conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            bal=conn.execute('SELECT COALESCE(SUM(so_du),0) FROM users').fetchone()[0]
+            wd=conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
+            dep=conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
+            svc=conn.execute("SELECT COUNT(*) FROM service_orders WHERE status='pending'").fetchone()[0]
+            today=conn.execute("SELECT COUNT(*) FROM users WHERE ngay_vao=?",(today_vn(),)).fetchone()[0]
+    except Exception:
+        LOGGER.exception("Admin dashboard query failed; attempting schema self-heal")
+        _v172_create_critical_tables(); _v172_add_columns()
+        with db() as conn:
+            u=conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            bal=conn.execute('SELECT COALESCE(SUM(so_du),0) FROM users').fetchone()[0]
+            wd=conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
+            dep=conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
+            svc=conn.execute("SELECT COUNT(*) FROM service_orders WHERE status='pending'").fetchone()[0]
+            today=conn.execute("SELECT COUNT(*) FROM users WHERE ngay_vao=?",(today_vn(),)).fetchone()[0]
     text=("🎛 <b>ADMIN CONTROL V13</b>\n━━━━━━━━━━━━━━━━━━━━\n"
           f"👥 User: <b>{u:,}</b> • 🆕 Hôm nay: <b>{today:,}</b>\n"
           f"💰 Tổng số dư: <b>{int(bal):,}đ</b>\n"
@@ -7284,6 +7310,87 @@ def init_db():
 
 
 # ============================================================
+# V17.2 - PRODUCTION DATABASE SELF-HEALING
+# Defined before startup so the repair is actually executed.
+# ============================================================
+_V172_PREVIOUS_INIT_DB = init_db
+
+def _v172_create_critical_tables():
+    serial = "BIGSERIAL" if DATABASE_URL else "INTEGER"
+    with db() as conn:
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS social_services (
+            id {serial} PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '', unit_price BIGINT NOT NULL DEFAULT 0,
+            min_qty INTEGER NOT NULL DEFAULT 1, max_qty INTEGER NOT NULL DEFAULT 1,
+            active INTEGER NOT NULL DEFAULT 1, service_type TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS service_orders (
+            order_id TEXT PRIMARY KEY, user_id BIGINT NOT NULL, service_id INTEGER NOT NULL,
+            link TEXT NOT NULL, quantity INTEGER NOT NULL, total BIGINT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', note TEXT, admin_id BIGINT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, provider_order TEXT)""")
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS scheduled_notifications (
+            id {serial} PRIMARY KEY, send_time TEXT NOT NULL,
+            frequency TEXT NOT NULL DEFAULT 'once', target TEXT NOT NULL DEFAULT 'all',
+            content TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+            last_sent_date TEXT, created_at TEXT NOT NULL)""")
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS wallet_ledger (
+            id {serial} PRIMARY KEY, user_id BIGINT NOT NULL, wallet_type TEXT NOT NULL,
+            delta BIGINT NOT NULL, balance_after BIGINT NOT NULL, kind TEXT NOT NULL,
+            reference_id TEXT, note TEXT, created_at TEXT NOT NULL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id,id DESC)")
+
+def _v172_add_columns():
+    migrations = [
+        ("users","so_du_nap","BIGINT NOT NULL DEFAULT 0"),("users","bi_khoa","INTEGER NOT NULL DEFAULT 0"),
+        ("users","username","TEXT"),("users","cap_gioi_thieu","TEXT NOT NULL DEFAULT 'Thành viên'"),
+        ("users","cap_nap","TEXT NOT NULL DEFAULT 'Thành viên'"),("users","cap_dac_biet","TEXT NOT NULL DEFAULT 'Chưa mở'"),
+        ("users","total_deposited","BIGINT NOT NULL DEFAULT 0"),("users","total_earned","BIGINT NOT NULL DEFAULT 0"),
+        ("users","total_withdrawn","BIGINT NOT NULL DEFAULT 0"),("users","last_withdraw_at","TEXT"),
+        ("users","risk_score","INTEGER NOT NULL DEFAULT 0"),("users","last_active_at","TEXT"),
+        ("users","new_user_bonus_claimed","INTEGER NOT NULL DEFAULT 0"),
+        ("withdrawals","risk_score","INTEGER NOT NULL DEFAULT 0"),("withdrawals","account_hash","TEXT"),
+        ("withdrawals","risk_flags","TEXT"),("withdrawals","reviewed_at","TEXT"),("withdrawals","reject_reason","TEXT"),
+        ("withdrawals","approved_by","BIGINT"),("withdrawals","rejected_by","BIGINT"),
+        ("deposits","deposit_type","TEXT NOT NULL DEFAULT 'balance'"),("deposits","approved_by","BIGINT"),
+        ("deposits","approved_at","TEXT"),("deposits","photo_file_id","TEXT"),
+        ("video_links","active","INTEGER NOT NULL DEFAULT 1"),("video_links","views","INTEGER NOT NULL DEFAULT 0"),
+        ("video_links","claimed","INTEGER NOT NULL DEFAULT 0"),("video_links","reward_total","BIGINT NOT NULL DEFAULT 0"),
+        ("video_links","category","TEXT NOT NULL DEFAULT 'default'"),("video_links","created_at","TEXT"),
+        ("social_services","description","TEXT NOT NULL DEFAULT ''"),("social_services","unit_price","BIGINT NOT NULL DEFAULT 0"),
+        ("social_services","min_qty","INTEGER NOT NULL DEFAULT 1"),("social_services","max_qty","INTEGER NOT NULL DEFAULT 1"),
+        ("social_services","active","INTEGER NOT NULL DEFAULT 1"),("social_services","service_type","TEXT NOT NULL DEFAULT 'manual'"),
+        ("social_services","created_at","TEXT"),("service_orders","note","TEXT"),("service_orders","admin_id","BIGINT"),
+        ("service_orders","created_at","TEXT"),("service_orders","updated_at","TEXT"),("service_orders","provider_order","TEXT"),
+        ("scheduled_notifications","active","INTEGER NOT NULL DEFAULT 1"),("scheduled_notifications","last_sent_date","TEXT"),
+    ]
+    for table,column,definition in migrations:
+        try:
+            with db() as conn: _safe_add_column(conn,table,column,definition)
+        except Exception: LOGGER.exception("V17.2 migration failed: %s.%s",table,column)
+
+def _v172_seed_services():
+    try:
+        with db() as conn:
+            for code,name,desc,price,mn,mx in SOCIAL_SERVICE_DEFAULTS:
+                conn.execute("""INSERT INTO social_services
+                (code,name,description,unit_price,min_qty,max_qty,active,service_type,created_at)
+                VALUES (?,?,?,?,?,?,1,?,?) ON CONFLICT(code) DO UPDATE SET
+                name=excluded.name,description=excluded.description,unit_price=excluded.unit_price,
+                min_qty=excluded.min_qty,max_qty=excluded.max_qty,service_type=excluded.service_type""",
+                (code,name,desc,price,mn,mx,"manual",now_vn().strftime("%d/%m/%Y %H:%M:%S")))
+    except Exception: LOGGER.exception("V17.2 service seed warning")
+
+def init_db():
+    try: _V172_PREVIOUS_INIT_DB()
+    except Exception: LOGGER.exception("Legacy init_db warning; continuing with V17.2 repair")
+    try: _v172_create_critical_tables()
+    except Exception: LOGGER.exception("V17.2 critical table creation failed")
+    _v172_add_columns()
+    _v172_seed_services()
+
+
+# ============================================================
 # MAIN
 # ============================================================
 def build_application():
@@ -7717,6 +7824,7 @@ if __name__ == "__main__":
             )
 
         init_db()
+        LOGGER.info("Database schema self-heal V17.2 completed")
         backend = "Neon PostgreSQL" if DATABASE_URL else f"SQLite ({DB_FILE})"
         LOGGER.info("Database backend: %s", backend)
         run_bot()
