@@ -11,16 +11,16 @@ except ImportError:  # SQLite vẫn được dùng khi chạy local không có D
 import logging
 import signal
 import uuid
-import threading
 import io
 import random
 import string
 import re
 from urllib.parse import quote
 from PIL import Image, ImageDraw, ImageFont
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from telegram.error import BadRequest
 
 from telegram import (
     Update,
@@ -45,7 +45,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFKQg9_SpdAYo1iAqYwTfueD6TOifJZvE8").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -92,98 +92,6 @@ def get_public_webhook_url():
             "RENDER_EXTERNAL_URL tự cung cấp hoặc đặt WEBHOOK_URL thủ công."
         )
     return f"{base}{WEBHOOK_PATH}"
-
-
-def _make_webhook_handler(application, loop):
-    class _WebhookHandler(BaseHTTPRequestHandler):
-        def _send(self, status, body=b"OK", content_type="text/plain; charset=utf-8"):
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            if body:
-                self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path.split("?", 1)[0] in ("/", "/health"):
-                self._send(200, b"OK")
-            else:
-                self._send(404, b"Not Found")
-
-        def do_HEAD(self):
-            if self.path.split("?", 1)[0] in ("/", "/health"):
-                self._send(200, b"")
-            else:
-                self._send(404, b"")
-
-        def do_POST(self):
-            path = self.path.split("?", 1)[0]
-            LOGGER.info("Incoming POST path=%s", path)
-            if path != WEBHOOK_PATH:
-                LOGGER.warning("Webhook path mismatch: got=%s expected=%s", path, WEBHOOK_PATH)
-                self._send(404, b"Not Found")
-                return
-
-            if WEBHOOK_SECRET:
-                received = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-                if received != WEBHOOK_SECRET:
-                    LOGGER.warning("Webhook secret mismatch")
-                    self._send(403, b"Forbidden")
-                    return
-
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-                if length <= 0 or length > 5 * 1024 * 1024:
-                    LOGGER.warning("Invalid webhook body length=%s", length)
-                    self._send(400, b"Invalid body")
-                    return
-                raw = self.rfile.read(length)
-                data = __import__("json").loads(raw.decode("utf-8"))
-                telegram_update = Update.de_json(data, application.bot)
-                if telegram_update is None:
-                    self._send(400, b"Invalid update")
-                    return
-
-                update_id = getattr(telegram_update, "update_id", None)
-                update_type = (
-                    "message" if telegram_update.message else
-                    "callback_query" if telegram_update.callback_query else
-                    "other"
-                )
-                LOGGER.info("Webhook received update_id=%s type=%s", update_id, update_type)
-
-                # Process the update directly on PTB's event loop. This avoids
-                # relying on the internal update queue when using a custom HTTP server.
-                future = asyncio.run_coroutine_threadsafe(
-                    application.process_update(telegram_update), loop
-                )
-                future.result(timeout=30)
-                LOGGER.info("Webhook processed update_id=%s", update_id)
-                self._send(200, b"OK")
-            except Exception as exc:
-                LOGGER.exception("Webhook update error: %r", exc)
-                try:
-                    self._send(500, b"Internal Server Error")
-                except Exception:
-                    pass
-
-        def log_message(self, format, *args):
-            return
-
-    return _WebhookHandler
-
-
-def start_webhook_server(application, loop):
-    handler = _make_webhook_handler(application, loop)
-    server = ThreadingHTTPServer(("0.0.0.0", RENDER_PORT), handler)
-    LOGGER.info("Render webhook server listening on 0.0.0.0:%s", RENDER_PORT)
-    thread = threading.Thread(
-        target=server.serve_forever,
-        name="render-webhook-server",
-        daemon=True,
-    )
-    thread.start()
-    return server
 
 
 # Logging production-friendly: Render sẽ giữ log để truy lỗi.
@@ -2523,97 +2431,56 @@ def user_is_verified(user_id: int) -> bool:
 
 # ADMIN
 # ============================================================
-async def _admin_dashboard_content():
-    with db() as conn:
-        tong_nguoi = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        tong_cho_rut = conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
-        tong_cho_nap = conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
-        tong_cho_xac_minh = conn.execute("SELECT COUNT(*) FROM verification_requests WHERE status='pending'").fetchone()[0]
-        tong_so_du = conn.execute("SELECT COALESCE(SUM(so_du),0) FROM users").fetchone()[0]
-        tong_so_du_nap = conn.execute("SELECT COALESCE(SUM(so_du_nap),0) FROM users").fetchone()[0]
-        nguoi_bi_khoa = conn.execute("SELECT COUNT(*) FROM users WHERE bi_khoa=1").fetchone()[0]
-        ngay_prefix = now_vn().strftime("%d/%m/%Y") + "%"
-        nguoi_moi_hom_nay = conn.execute("SELECT COUNT(*) FROM users WHERE ngay_vao LIKE ?", (ngay_prefix,)).fetchone()[0]
-        rut_hom_nay = conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='approved' AND thoi_gian LIKE ?", (ngay_prefix,)).fetchone()[0]
-        tien_rut_hom_nay = conn.execute("SELECT COALESCE(SUM(so_tien),0) FROM withdrawals WHERE status='approved' AND thoi_gian LIKE ?", (ngay_prefix,)).fetchone()[0]
+_ADMIN_DASH_CACHE = {"ts": 0.0, "value": None}
+_ADMIN_DASH_TTL = 2.5
 
-    text = (
-        "🎛 <b>ADMIN CONTROL</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 User: <b>{tong_nguoi:,}</b>  •  🔒 Khóa: <b>{nguoi_bi_khoa:,}</b>\n"
-        f"💰 Tổng số dư kiếm được: <b>{tong_so_du:,}đ</b>\n💳 Tổng số dư nạp: <b>{tong_so_du_nap:,}đ</b>\n\n"
-        f"⏳ Chờ xử lý: 💸 <b>{tong_cho_rut}</b>  •  📥 <b>{tong_cho_nap}</b>  •  🛡 <b>{tong_cho_xac_minh}</b>\n"
-        f"📈 Hôm nay: 💸 <b>{rut_hom_nay}</b> đơn  •  <b>{tien_rut_hom_nay:,}đ</b>  •  🆕 <b>{nguoi_moi_hom_nay}</b> user\n\n"
-        "⚡ <b>Chọn chức năng quản lý</b>"
-    )
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("💸 Rút", callback_data="admin_ds_rut"),
-            InlineKeyboardButton("📥 Nạp", callback_data="admin_ds_nap"),
-            InlineKeyboardButton("🛡 Xác minh", callback_data="admin_ds_xacminh"),
-        ],
-        [
-            InlineKeyboardButton("👥 Người dùng", callback_data="admin_ds_nguoi"),
-            InlineKeyboardButton("🎬 Video", callback_data="admin_video"),
-            InlineKeyboardButton("📢 Thông báo", callback_data="admin_gui_tb"),
-        ],
-        [
-            InlineKeyboardButton("💰 + Tiền", callback_data="admin_cong_tien"),
-            InlineKeyboardButton("💸 − Tiền", callback_data="admin_tru_tien"),
-            InlineKeyboardButton("💰 + Tất cả", callback_data="admin_cong_tat_ca"),
-        ],
-        [
-            InlineKeyboardButton("📜 Giao dịch", callback_data="admin_lich_su"),
-            InlineKeyboardButton("🛡 Nhật ký", callback_data="admin_log"),
-            InlineKeyboardButton("⚙️ Cài đặt", callback_data="admin_settings"),
-        ],
-        [InlineKeyboardButton("🚀 ADMIN SMART CENTER", callback_data="admin_v9:dashboard")],
-        [InlineKeyboardButton("✅ DUYỆT TẤT CẢ ĐƠN", callback_data="admin_duyet_tat_ca")],
-        [InlineKeyboardButton("🔄 Làm mới", callback_data="admin_refresh")],
+async def _admin_dashboard_content(force=False):
+    now = time.monotonic()
+    if not force and _ADMIN_DASH_CACHE["value"] is not None and now - _ADMIN_DASH_CACHE["ts"] < _ADMIN_DASH_TTL:
+        return _ADMIN_DASH_CACHE["value"]
+    # Một truy vấn tổng hợp thay cho nhiều round-trip DB.
+    sql = """
+    SELECT
+      (SELECT COUNT(*) FROM users) AS users,
+      (SELECT COUNT(*) FROM users WHERE bi_khoa=1) AS locked,
+      (SELECT COALESCE(SUM(so_du),0) FROM users) AS balance,
+      (SELECT COALESCE(SUM(so_du_nap),0) FROM users) AS deposit_balance,
+      (SELECT COUNT(*) FROM withdrawals WHERE status='pending') AS pending_wd,
+      (SELECT COUNT(*) FROM deposits WHERE status='pending') AS pending_dep,
+      (SELECT COUNT(*) FROM verification_requests WHERE status='pending') AS pending_verify,
+      (SELECT COUNT(*) FROM withdrawals WHERE status='pending' AND COALESCE(risk_score,0)>=50) AS risk_wd,
+      (SELECT COUNT(*) FROM video_links WHERE COALESCE(active,1)=1) AS videos,
+      (SELECT COUNT(*) FROM service_orders WHERE status='pending') AS service_pending,
+      (SELECT COUNT(*) FROM service_orders WHERE status='processing') AS service_processing,
+      (SELECT COUNT(*) FROM admins WHERE active=1) AS admins
+    """
+    try:
+        with db() as conn:
+            r = conn.execute(sql).fetchone()
+        text=(
+            "🎛 <b>QUẢN LÝ ADMIN V20</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 User: <b>{int(r['users']):,}</b>  •  🔒 Khóa: <b>{int(r['locked']):,}</b>\n"
+            f"💰 Ví rút: <b>{int(r['balance'] or 0):,}đ</b>  •  💳 Ví nạp: <b>{int(r['deposit_balance'] or 0):,}đ</b>\n"
+            f"🎬 Video: <b>{int(r['videos']):,}</b>  •  👮 Admin: <b>{int(r['admins']):,}</b>\n\n"
+            f"⏳ Chờ: 💸 {int(r['pending_wd'])}  •  📥 {int(r['pending_dep'])}  •  🛡 {int(r['pending_verify'])}\n"
+            f"🛒 Dịch vụ: ⏳ {int(r['service_pending'])}  •  🔄 {int(r['service_processing'])}  •  🚨 Risk: {int(r['risk_wd'])}"
+        )
+    except Exception:
+        LOGGER.exception("Admin dashboard query failed")
+        text="🎛 <b>QUẢN LÝ ADMIN V20</b>\n━━━━━━━━━━━━━━━━━━━━\n⚠️ Không tải được thống kê. Hãy bấm Làm mới."
+    kb=InlineKeyboardMarkup([
+        [InlineKeyboardButton("💸 Rút",callback_data="admin_ds_rut"), InlineKeyboardButton("📥 Nạp",callback_data="admin_ds_nap"), InlineKeyboardButton("🛡 Xác minh",callback_data="admin_ds_xacminh")],
+        [InlineKeyboardButton("👥 Người dùng",callback_data="admin_ds_nguoi"), InlineKeyboardButton("🛒 Dịch vụ",callback_data="admin_svc:list"), InlineKeyboardButton("🎬 Video",callback_data="admin_ext:video_stats")],
+        [InlineKeyboardButton("💰 Cộng tiền",callback_data="admin_cong_tien"), InlineKeyboardButton("💸 Trừ tiền",callback_data="admin_tru_tien"), InlineKeyboardButton("📢 Thông báo",callback_data="admin_gui_tb")],
+        [InlineKeyboardButton("🔎 Tìm User",callback_data="admin_tim_nguoi"), InlineKeyboardButton("⚡ Hàng chờ",callback_data="admin_v9:withdraw_queue"), InlineKeyboardButton("🩺 Sức khỏe",callback_data="admin_v9:health")],
+        [InlineKeyboardButton("🚨 Anti-fraud",callback_data="admin_ext:fraud"), InlineKeyboardButton("👮 Admin",callback_data="admin_ext:admins"), InlineKeyboardButton("📊 Báo cáo",callback_data="admin_ext:stats")],
+        [InlineKeyboardButton("📊 Báo cáo",callback_data="admin_ext:stats"), InlineKeyboardButton("⚙️ Cài đặt",callback_data="admin_ext:settings"), InlineKeyboardButton("🧰 Hệ thống",callback_data="admin_ext:system")],
+        [InlineKeyboardButton("🔄 Làm mới",callback_data="admin_refresh")]
     ])
-    return text, keyboard
-
-
-async def trang_quan_ly_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Bạn không có quyền truy cập khu vực Admin.")
-        return
-
-    text, keyboard = await _admin_dashboard_content()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-
-def _admin_user_search_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Tìm người dùng", callback_data="admin_tim_nguoi")],
-        [InlineKeyboardButton("📋 Tất cả người dùng", callback_data="admin_ds_nguoi")],
-        [InlineKeyboardButton("⬅️ Quay lại Admin", callback_data="admin_home")],
-    ])
-
-
-def _admin_search_users(keyword):
-    keyword = (keyword or "").strip()
-    if not keyword:
-        return []
-    with db() as conn:
-        if keyword.isdigit():
-            rows = conn.execute(
-                "SELECT * FROM users WHERE CAST(id AS TEXT)=? LIMIT 20",
-                (keyword,),
-            ).fetchall()
-        else:
-            like = f"%{keyword}%"
-            rows = conn.execute(
-                """
-                SELECT * FROM users
-                WHERE LOWER(ten) LIKE LOWER(?)
-                   OR LOWER(COALESCE(username, '')) LIKE LOWER(?)
-                ORDER BY id
-                LIMIT 20
-                """,
-                (like, like),
-            ).fetchall()
-    return [row_to_user(r) for r in rows]
+    value=(text,kb)
+    _ADMIN_DASH_CACHE.update(ts=now,value=value)
+    return value
 
 
 def _admin_user_detail_keyboard(user_id):
@@ -2714,24 +2581,25 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
 
     if not is_admin(update.effective_user.id):
-        await query.answer("❌ Không có quyền.", show_alert=True)
+        await _v201_safe_answer(query, "❌ Không có quyền.", show_alert=True)
         return
 
+    await _v201_safe_answer(query)
     data = query.data
 
 
     if data == "admin_video":
-        await query.answer()
+        await _v201_safe_answer(query, )
         await _admin_video_list_message(query)
         return
 
     if data == "admin_video_list":
-        await query.answer()
+        await _v201_safe_answer(query, )
         await _admin_video_list_message(query)
         return
 
     if data == "admin_video_add":
-        await query.answer()
+        await _v201_safe_answer(query, )
         await query.message.reply_text(
             "➕ <b>THÊM VIDEO TIKTOK</b>\n\nGửi link TikTok cần thêm.\nVí dụ: <code>https://vt.tiktok.com/...</code>",
             parse_mode="HTML", reply_markup=ReplyKeyboardRemove()
@@ -2742,11 +2610,11 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             video_id = int(data.split(":", 1)[1])
         except ValueError:
-            await query.answer("❌ ID video không hợp lệ.", show_alert=True)
+            await _v201_safe_answer(query, "❌ ID video không hợp lệ.", show_alert=True)
             return
         with db() as conn:
             deleted = conn.execute("DELETE FROM video_links WHERE id=?", (video_id,)).rowcount
-        await query.answer("🗑 Đã xóa video." if deleted else "❌ Không tìm thấy video.", show_alert=True)
+        await _v201_safe_answer(query, "🗑 Đã xóa video." if deleted else "❌ Không tìm thấy video.", show_alert=True)
         await _admin_video_list_message(query)
         return
 
@@ -2754,7 +2622,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # TÌM KIẾM NGƯỜI DÙNG
     # --------------------------------------------------------
     if data == "admin_tim_nguoi":
-        await query.answer()
+        await _v201_safe_answer(query, )
         await query.message.reply_text(
             "🔎 <b>TÌM NGƯỜI DÙNG</b>\n\n"
             "Nhập <b>ID</b>, <b>tên</b> hoặc <b>@username</b> cần tìm:",
@@ -2770,7 +2638,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             user_id = int(data.split(":", 1)[1])
         except ValueError:
-            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            await _v201_safe_answer(query, "❌ ID không hợp lệ.", show_alert=True)
             return
         context.user_data["admin_user_id"] = user_id
         await _admin_hien_thi_nguoi(query, user_id)
@@ -2779,29 +2647,29 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if data.startswith("admin_edit:"):
         parts = data.split(":")
         if len(parts) != 3:
-            await query.answer("❌ Dữ liệu không hợp lệ.", show_alert=True)
+            await _v201_safe_answer(query, "❌ Dữ liệu không hợp lệ.", show_alert=True)
             return
         action, raw_id = parts[1], parts[2]
         try:
             user_id = int(raw_id)
         except ValueError:
-            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            await _v201_safe_answer(query, "❌ ID không hợp lệ.", show_alert=True)
             return
         if not get_user(user_id):
-            await query.answer("❌ Không tìm thấy người dùng.", show_alert=True)
+            await _v201_safe_answer(query, "❌ Không tìm thấy người dùng.", show_alert=True)
             return
         context.user_data["admin_user_id"] = user_id
 
         if action == "verify":
             with db() as conn:
                 conn.execute("UPDATE users SET xac_minh_nguoi_that=1 WHERE id=?", (user_id,))
-            await query.answer("✅ Đã xác minh người dùng.")
+            await _v201_safe_answer(query, "✅ Đã xác minh người dùng.")
             await _admin_hien_thi_nguoi(query, user_id)
             return
         if action == "unverify":
             with db() as conn:
                 conn.execute("UPDATE users SET xac_minh_nguoi_that=0 WHERE id=?", (user_id,))
-            await query.answer("🔓 Đã bỏ xác minh.")
+            await _v201_safe_answer(query, "🔓 Đã bỏ xác minh.")
             await _admin_hien_thi_nguoi(query, user_id)
             return
         if action in {"name", "account", "gioithieu", "video", "video_ngay", "earned", "withdrawn"}:
@@ -2811,7 +2679,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             with db() as conn:
                 conn.execute("UPDATE users SET captcha_da_xac_minh=0 WHERE id=?", (user_id,))
             admin_log("Reset CAPTCHA", user_id)
-            await query.answer("🔄 Đã reset CAPTCHA.")
+            await _v201_safe_answer(query, "🔄 Đã reset CAPTCHA.")
             await _admin_hien_thi_nguoi(query, user_id)
             return
 
@@ -2820,7 +2688,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             with db() as conn:
                 conn.execute("UPDATE users SET bi_khoa=? WHERE id=?", (locked, user_id))
             admin_log("Khóa tài khoản" if locked else "Mở khóa tài khoản", user_id)
-            await query.answer("🔒 Đã khóa tài khoản." if locked else "🔓 Đã mở khóa tài khoản.", show_alert=True)
+            await _v201_safe_answer(query, "🔒 Đã khóa tài khoản." if locked else "🔓 Đã mở khóa tài khoản.", show_alert=True)
             await _admin_hien_thi_nguoi(query, user_id)
             return
 
@@ -2828,12 +2696,12 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             with db() as conn:
                 conn.execute("UPDATE users SET video_ngay=0, ngay_reset=?, dang_xem=0 WHERE id=?", (today_vn(), user_id))
             admin_log("Reset lượt video trong ngày", user_id)
-            await query.answer("🔄 Đã reset lượt ngày.", show_alert=True)
+            await _v201_safe_answer(query, "🔄 Đã reset lượt ngày.", show_alert=True)
             await _admin_hien_thi_nguoi(query, user_id)
             return
 
         if action == "reset":
-            await query.answer("⚠️ Xác nhận reset tài khoản.", show_alert=True)
+            await _v201_safe_answer(query, "⚠️ Xác nhận reset tài khoản.", show_alert=True)
             await query.message.reply_text(
                 f"⚠️ <b>RESET TÀI KHOẢN</b>\n\n🆔 <code>{user_id}</code>\n\n"
                 "Thao tác sẽ đưa số dư, cấp, video, giới thiệu, CAPTCHA, xác minh và tài khoản rút về mặc định.\n"
@@ -2872,10 +2740,10 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             user_id = int(data.split(":", 1)[1])
         except ValueError:
-            await query.answer("❌ ID không hợp lệ.", show_alert=True)
+            await _v201_safe_answer(query, "❌ ID không hợp lệ.", show_alert=True)
             return
         if not get_user(user_id):
-            await query.answer("❌ Không tìm thấy người dùng.", show_alert=True)
+            await _v201_safe_answer(query, "❌ Không tìm thấy người dùng.", show_alert=True)
             return
         with db() as conn:
             conn.execute(
@@ -2885,7 +2753,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 ("Thành viên", today_vn(), user_id),
             )
         admin_log("Reset tài khoản", user_id)
-        await query.answer("♻️ Đã reset tài khoản.", show_alert=True)
+        await _v201_safe_answer(query, "♻️ Đã reset tài khoản.", show_alert=True)
         await _admin_hien_thi_nguoi(query, user_id)
         return
 
@@ -2893,7 +2761,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # XÁC MINH NGƯỜI THẬT
     # --------------------------------------------------------
     if data.startswith("xacminh_ok:") or data.startswith("xacminh_no:"):
-        await query.answer()
+        await _v201_safe_answer(query, )
         request_id = data.split(":", 1)[1]
 
         with db() as conn:
@@ -2913,7 +2781,7 @@ async def xu_ly_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
             if data.startswith("xacminh_ok:"):
                 if not yc["photo_file_id"]:
-                    await query.answer(
+                    await _v201_safe_answer(query, 
                         "❌ Chưa có biên lai. Yêu cầu người dùng gửi ảnh trước khi duyệt.",
                         show_alert=True,
                     )
@@ -2977,7 +2845,7 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                 )
         return
 
-    await query.answer()
+    await _v201_safe_answer(query, )
 
     if data.startswith("admin_history:"):
         user_id = int(data.split(":", 1)[1])
@@ -3038,7 +2906,7 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
     # DASHBOARD ADMIN
     # --------------------------------------------------------
     if data in ("admin_home", "admin_refresh"):
-        text, keyboard = await _admin_dashboard_content()
+        text, keyboard = await _admin_dashboard_content(force=(data == "admin_refresh"))
         try:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         except Exception:
@@ -3068,7 +2936,7 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
 
             if data.startswith("duyet_nap_ok:"):
                 if not yc["photo_file_id"]:
-                    await query.answer(
+                    await _v201_safe_answer(query, 
                         "❌ Chưa có biên lai. Không thể duyệt đơn nạp.",
                         show_alert=True,
                     )
@@ -4038,7 +3906,28 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def _v201_safe_answer(q, text=None, show_alert=False):
+    """Acknowledge callback queries safely; duplicate/stale answers are ignored."""
+    try:
+        if text is None:
+            await q.answer()
+        else:
+            await q.answer(text, show_alert=show_alert)
+    except BadRequest as exc:
+        msg = str(exc)
+        if any(x in msg for x in ("Query is too old", "query id is invalid", "query is too old")):
+            return
+        LOGGER.warning("Callback answer failed: %s", exc)
+    except Exception:
+        LOGGER.exception("Callback answer failed")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    # Telegram callback queries expire quickly. A stale click is harmless and
+    # must not trigger a second callback response (which creates another error).
+    if isinstance(context.error, BadRequest) and any(x in str(context.error) for x in ("Query is too old", "query id is invalid", "query is too old", "Response timeout expired")):
+        LOGGER.warning("Ignoring expired callback query: %s", context.error)
+        return
     LOGGER.exception("Unhandled Telegram error", exc_info=context.error)
     try:
         if isinstance(update, Update):
@@ -4071,23 +3960,35 @@ RANK_ICONS = [cfg.get("icon", "⭐") for cfg in CAP_BAC_CONFIG.values()]
 RANK_NAMES = list(CAP_BAC_CONFIG.keys())
 
 
+# V19: cache quyền admin rất ngắn để tránh mở DB cho mọi callback.
+_ADMIN_CACHE = {}
+_ADMIN_CACHE_TTL = 20.0
+
 def is_admin(user_id: int) -> bool:
-    if user_id in ADMIN_IDS:
+    uid = int(user_id or 0)
+    if uid in ADMIN_IDS:
         return True
+    now = time.monotonic()
+    cached = _ADMIN_CACHE.get(uid)
+    if cached and now - cached[0] < _ADMIN_CACHE_TTL:
+        return cached[1]
     try:
         with db() as conn:
-            row = conn.execute("SELECT active FROM admins WHERE admin_id=?", (int(user_id),)).fetchone()
-            return bool(row and row["active"])
+            row = conn.execute("SELECT active FROM admins WHERE admin_id=?", (uid,)).fetchone()
+            value = bool(row and row["active"])
     except Exception:
-        return False
+        value = False
+    _ADMIN_CACHE[uid] = (now, value)
+    return value
 
 
 def admin_role(user_id: int) -> str:
-    if user_id == ADMIN_ID:
+    uid = int(user_id or 0)
+    if uid == ADMIN_ID:
         return "owner"
     try:
         with db() as conn:
-            row = conn.execute("SELECT role FROM admins WHERE admin_id=? AND active=1", (int(user_id),)).fetchone()
+            row = conn.execute("SELECT role FROM admins WHERE admin_id=? AND active=1", (uid,)).fetchone()
             return row["role"] if row else "none"
     except Exception:
         return "none"
@@ -4415,16 +4316,17 @@ def _target_users(target):
 
 async def pro_withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query
+    await _v201_safe_answer(q)
     data=q.data
     if not is_admin(update.effective_user.id) or not _role_allows(update.effective_user.id,'money'):
-        await q.answer("⛔ Bạn không có quyền thao tác tài chính.", show_alert=True); return
+        await _v201_safe_answer(q, "⛔ Bạn không có quyền thao tác tài chính.", show_alert=True); return
     if data.startswith('pro_wd_confirm:'):
         rid=data.split(':',1)[1]
         await _approve_withdrawal_by_admin(q, context, rid)
     elif data.startswith('pro_wd_reject:'):
         rid=data.split(':',1)[1]
         context.user_data['reject_withdrawal']=rid
-        await q.answer()
+        await _v201_safe_answer(q, )
         await q.message.reply_text("❌ Nhập lý do từ chối đơn rút (hoặc nhập - để bỏ qua):", reply_markup=ReplyKeyboardRemove())
         return ADMIN_EXT_INPUT
 
@@ -4502,22 +4404,25 @@ async def admin_user_stats_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def admin_pro_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; data=q.data
-    if not is_admin(update.effective_user.id): return
+    if not is_admin(update.effective_user.id):
+        await _v201_safe_answer(q, "Không có quyền.", True)
+        return
+    await _v201_safe_answer(q)
     if data.startswith('pro_user_stats:'): return await admin_user_stats_callback(update,context)
     if data.startswith('pro_wd_confirm:') or data.startswith('pro_wd_reject:'): return await pro_withdraw_confirm_callback(update,context)
     if data=='pro_video_bulk':
         context.user_data['admin_ext_mode']='video_bulk'
-        await q.answer(); await q.message.reply_text('🎬 Gửi nhiều link TikTok, mỗi link một dòng:',reply_markup=ReplyKeyboardRemove()); return ADMIN_EXT_INPUT
+        await _v201_safe_answer(q, ); await q.message.reply_text('🎬 Gửi nhiều link TikTok, mỗi link một dòng:',reply_markup=ReplyKeyboardRemove()); return ADMIN_EXT_INPUT
     if data=='pro_broadcast:verified' or data=='pro_broadcast:unverified' or data=='pro_broadcast:rank':
         context.user_data['admin_ext_mode']=data.replace('pro_broadcast:','broadcast:')
-        await q.answer(); await q.message.reply_text('📢 Nhập nội dung thông báo:',reply_markup=ReplyKeyboardRemove()); return ADMIN_EXT_INPUT
+        await _v201_safe_answer(q, ); await q.message.reply_text('📢 Nhập nội dung thông báo:',reply_markup=ReplyKeyboardRemove()); return ADMIN_EXT_INPUT
     if data=='pro_settings_more':
-        await q.answer();
+        await _v201_safe_answer(q, );
         keys=['new_user_bonus','risk_rut_lon','rut_toi_thieu','rut_toi_da','rut_so_lan_ngay','rut_cooldown_giay','captcha_enabled','tasks_enabled']
         with db() as conn: vals={k:get_setting(k,'0') for k in keys}
         await q.message.reply_text('⚙️ <b>CÀI ĐẶT NÂNG CAO</b>\n\n'+'\n'.join(f'• {k}: <b>{h(vals[k])}</b>' for k in keys),parse_mode='HTML',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⚙️ Quản lý dịch vụ',callback_data='admin_svc:list'), InlineKeyboardButton('⬅️ Admin',callback_data='admin_home')]])); return
     if data=='pro_wd_approve_list':
-        await q.answer();
+        await _v201_safe_answer(q, );
         with db() as conn: rows=conn.execute("SELECT * FROM withdrawals WHERE status='pending' ORDER BY risk_score DESC,thoi_gian DESC LIMIT 30").fetchall()
         for r in rows:
             kb=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Xác nhận duyệt',callback_data=f"pro_wd_confirm:{r['request_id']}"),InlineKeyboardButton('❌ Từ chối',callback_data=f"pro_wd_reject:{r['request_id']}")]])
@@ -4904,7 +4809,7 @@ async def event_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎉 <b>{h(ev['name'])}</b>\n\n🔥 Hệ số thưởng: <b>x{ev['multiplier']}</b>\n⏰ Kết thúc: <b>{h(ev['ends_at'] or 'Chưa đặt')}</b>",parse_mode='HTML',reply_markup=menu_chinh(update.effective_user.id))
 
 
-async def _admin_dashboard_content():
+async def _admin_dashboard_content_legacy_v20():
     with db() as conn:
         tong_nguoi=conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         cho_rut=conn.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
@@ -5738,7 +5643,8 @@ async def admin_v9_broadcast_action(update: Update, context: ContextTypes.DEFAUL
 async def admin_v9_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query
     if not is_admin(update.effective_user.id):
-        await q.answer('Không có quyền.', show_alert=True); return
+        await _v201_safe_answer(q, 'Không có quyền.', True); return
+    await _v201_safe_answer(q)
     await _admin_v9_message(q, q.data.split(':',1)[1] if ':' in q.data else 'dashboard')
 
 async def extra_callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5769,7 +5675,12 @@ _ORIGINAL_START_V3 = start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u=await _ORIGINAL_START_V3(update,context)
     try:
-        with db() as conn: conn.execute("UPDATE users SET last_active_at=? WHERE id=?",(now_vn().strftime('%d/%m/%Y %H:%M:%S'),update.effective_user.id))
+        now_m = time.monotonic()
+        last_m = context.user_data.get("_v19_last_active_write", 0.0)
+        if now_m - last_m >= 60:
+            with db() as conn:
+                conn.execute("UPDATE users SET last_active_at=? WHERE id=?",(now_vn().strftime('%d/%m/%Y %H:%M:%S'),update.effective_user.id))
+            context.user_data["_v19_last_active_write"] = now_m
     except Exception: pass
     return u
 
@@ -6480,18 +6391,18 @@ async def _v13_admin_dashboard_content():
 
 async def v13_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; data=q.data
-    if not is_admin(q.from_user.id): return
+    if not is_admin(q.from_user.id):
+        await _v201_safe_answer(q, "Không có quyền.", True)
+        return
+    await _v201_safe_answer(q)
     if data=='admin_v13:services': return await v13_admin_services(update,context)
     if data=='admin_v13:home':
-        await q.answer(); text,kb=await _v13_admin_dashboard_content(); await q.edit_message_text(text,parse_mode='HTML',reply_markup=kb)
+        await _v201_safe_answer(q, ); text,kb=await _v13_admin_dashboard_content(); await q.edit_message_text(text,parse_mode='HTML',reply_markup=kb)
 
 
 def _v13_override_admin_dashboard():
-    global _admin_dashboard_content
-    async def _new(): return await _v13_admin_dashboard_content()
-    _admin_dashboard_content=_new
-
-_v13_override_admin_dashboard()
+    # V20 dashboard is canonical; keep V13 dashboard only for legacy callbacks.
+    return _admin_dashboard_content
 
 
 async def v13_nap_tien_message_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6662,8 +6573,8 @@ def _admin_user_detail_keyboard(user_id):
 # ============================================================
 # V15 UPGRADE: 3 LOẠI CẤP BẬC + DỊCH VỤ ĐẶC BIỆT + HARDENING
 # ============================================================
-V15_REF_UNLOCK_LEVEL = 5       # Giá trị mặc định, có thể chỉnh trong Admin
-V15_DEPOSIT_UNLOCK_LEVEL = 4   # Giá trị mặc định, có thể chỉnh trong Admin
+V15_REF_UNLOCK_LEVEL = 2       # Điều kiện mặc định: cấp giới thiệu 2
+V15_DEPOSIT_UNLOCK_LEVEL = 1   # Điều kiện mặc định: cấp nạp 1
 V15_SPECIAL_RANKS = [
     'Chưa mở', 'Đặc Quyền I', 'Đặc Quyền II', 'Đặc Quyền III', 'VIP', 'VIP+'
 ]
@@ -7061,27 +6972,28 @@ async def v16_admin_service_callback(update: Update, context: ContextTypes.DEFAU
     q = update.callback_query
     data = q.data or ''
     if not is_admin(q.from_user.id):
-        await q.answer('Không có quyền.', show_alert=True)
+        await _v201_safe_answer(q, 'Không có quyền.', True)
         return
+    await _v201_safe_answer(q)
     parts = data.split(':')
     action = parts[1] if len(parts) > 1 else ''
     if action == 'list':
         return await v16_admin_services(update, context)
     if action == 'conditions':
-        await q.answer()
+        await _v201_safe_answer(q, )
         ref_req, dep_req, ref_name, dep_name = _v15_unlock_names()
         await q.message.reply_text(
             '⚙️ <b>ĐIỀU KIỆN DỊCH VỤ ĐẶC BIỆT</b>\n\n'
             f'👥 Cấp giới thiệu tối thiểu: <b>{ref_req}</b> — {h(ref_name)}\n'
             f'💳 Cấp nạp tối thiểu: <b>{dep_req}</b> — {h(dep_name)}\n\n'
             'Gửi theo mẫu: <code>cấp_giới_thiệu|cấp_nạp</code>\n'
-            'Ví dụ: <code>5|4</code>\n\n'
+            'Ví dụ: <code>2|1</code>\n\n'
             f'📌 Giới hạn hợp lệ: GT 1–{len(MOC_CAP)}, Nạp 1–{len(CAP_NAP_AMOUNT)}',
             parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
         context.user_data['admin_service_mode'] = 'conditions'
         return ADMIN_SVC_CONDITIONS
     if action == 'add':
-        await q.answer()
+        await _v201_safe_answer(q, )
         await q.message.reply_text(
             '➕ <b>THÊM DỊCH VỤ</b>\n\n'
             'Gửi theo mẫu:\n<code>code|tên|giá/1|tối thiểu|tối đa|mô tả</code>\n\n'
@@ -7090,25 +7002,25 @@ async def v16_admin_service_callback(update: Update, context: ContextTypes.DEFAU
         context.user_data['admin_service_mode'] = 'add'
         return ADMIN_SVC_ADD
     if len(parts) < 3:
-        await q.answer('Dữ liệu không hợp lệ.', show_alert=True); return ConversationHandler.END
+        await _v201_safe_answer(q, 'Dữ liệu không hợp lệ.', show_alert=True); return ConversationHandler.END
     try:
         sid = int(parts[2])
     except ValueError:
-        await q.answer('ID dịch vụ không hợp lệ.', show_alert=True); return ConversationHandler.END
+        await _v201_safe_answer(q, 'ID dịch vụ không hợp lệ.', show_alert=True); return ConversationHandler.END
     if action == 'toggle':
         with db() as conn:
             row = conn.execute('SELECT active,name FROM social_services WHERE id=?', (sid,)).fetchone()
             if not row:
-                await q.answer('Không tìm thấy dịch vụ.', show_alert=True); return
+                await _v201_safe_answer(q, 'Không tìm thấy dịch vụ.', show_alert=True); return
             new = 0 if int(row['active']) else 1
             conn.execute('UPDATE social_services SET active=? WHERE id=?', (new, sid))
-        await q.answer('Đã cập nhật trạng thái.')
+        await _v201_safe_answer(q, 'Đã cập nhật trạng thái.')
         return await v16_admin_services(update, context)
     if action == 'delete':
         with db() as conn:
             row = conn.execute('SELECT name FROM social_services WHERE id=?', (sid,)).fetchone()
             if not row:
-                await q.answer('Không tìm thấy dịch vụ.', show_alert=True); return
+                await _v201_safe_answer(q, 'Không tìm thấy dịch vụ.', show_alert=True); return
             used = conn.execute('SELECT COUNT(*) FROM service_orders WHERE service_id=?', (sid,)).fetchone()[0]
             if used:
                 conn.execute('UPDATE social_services SET active=0 WHERE id=?', (sid,))
@@ -7116,14 +7028,14 @@ async def v16_admin_service_callback(update: Update, context: ContextTypes.DEFAU
             else:
                 conn.execute('DELETE FROM social_services WHERE id=?', (sid,))
                 msg = 'Đã xóa dịch vụ.'
-        await q.answer(msg, show_alert=True)
+        await _v201_safe_answer(q, msg, show_alert=True)
         return await v16_admin_services(update, context)
     if action == 'edit':
         with db() as conn:
             row = conn.execute('SELECT * FROM social_services WHERE id=?', (sid,)).fetchone()
         if not row:
-            await q.answer('Không tìm thấy dịch vụ.', show_alert=True); return
-        await q.answer()
+            await _v201_safe_answer(q, 'Không tìm thấy dịch vụ.', show_alert=True); return
+        await _v201_safe_answer(q, )
         context.user_data['admin_service_mode'] = 'edit'
         context.user_data['admin_service_id'] = sid
         await q.message.reply_text(
@@ -7131,7 +7043,7 @@ async def v16_admin_service_callback(update: Update, context: ContextTypes.DEFAU
             'Gửi:\n<code>tên|giá/1|tối thiểu|tối đa|mô tả</code>',
             parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
         return ADMIN_SVC_EDIT
-    await q.answer('Không hỗ trợ.', show_alert=True)
+    await _v201_safe_answer(q, 'Không hỗ trợ.', show_alert=True)
 
 async def v16_admin_service_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return ConversationHandler.END
@@ -7162,7 +7074,7 @@ async def v16_admin_service_conditions_input(update: Update, context: ContextTyp
     raw = (update.effective_message.text or '').strip().replace(' ', '')
     parts = raw.split('|')
     if len(parts) != 2:
-        await update.message.reply_text('❌ Nhập đúng mẫu: <code>5|4</code>', parse_mode='HTML')
+        await update.message.reply_text('❌ Nhập đúng mẫu: <code>2|1</code>', parse_mode='HTML')
         return ADMIN_SVC_CONDITIONS
     try:
         ref_req, dep_req = int(parts[0]), int(parts[1])
@@ -7362,7 +7274,7 @@ def _v172_add_columns():
         ("social_services","active","INTEGER NOT NULL DEFAULT 1"),("social_services","service_type","TEXT NOT NULL DEFAULT 'manual'"),
         ("social_services","created_at","TEXT"),("service_orders","note","TEXT"),("service_orders","admin_id","BIGINT"),
         ("service_orders","created_at","TEXT"),("service_orders","updated_at","TEXT"),("service_orders","provider_order","TEXT"),
-        ("scheduled_notifications","active","INTEGER NOT NULL DEFAULT 1"),("scheduled_notifications","last_sent_date","TEXT"),
+        ("scheduled_notifications","send_time","TEXT"),("scheduled_notifications","frequency","TEXT NOT NULL DEFAULT 'once'"),("scheduled_notifications","target","TEXT NOT NULL DEFAULT 'all'"),("scheduled_notifications","content","TEXT NOT NULL DEFAULT ''"),("scheduled_notifications","active","INTEGER NOT NULL DEFAULT 1"),("scheduled_notifications","last_sent_date","TEXT"),("scheduled_notifications","created_at","TEXT"),
     ]
     for table,column,definition in migrations:
         try:
@@ -7390,13 +7302,195 @@ def init_db():
     _v172_seed_services()
 
 
+# V17.4: migrate the requested social-service unlock condition to GT 2 + Nạp 1.
+# Only replaces the old built-in 5+4 defaults, so an admin can still customize it later.
+def _v174_fix_social_service_condition():
+    try:
+        with db() as conn:
+            ref_now = int(get_setting('special_ref_unlock_level', V15_REF_UNLOCK_LEVEL))
+            dep_now = int(get_setting('special_deposit_unlock_level', V15_DEPOSIT_UNLOCK_LEVEL))
+            if (ref_now, dep_now) == (5, 4):
+                set_setting('special_ref_unlock_level', 2)
+                set_setting('special_deposit_unlock_level', 1)
+                rows = conn.execute('SELECT id, gioi_thieu, cap_gioi_thieu, cap_nap, total_deposited FROM users').fetchall()
+                for r in rows:
+                    ref = r['cap_gioi_thieu'] or _v13_rank_by_referral(r['gioi_thieu'] or 0)
+                    dep = r['cap_nap'] or _v13_rank_by_deposit(r['total_deposited'] or 0)
+                    special = _v15_special_rank(ref, dep)
+                    conn.execute('UPDATE users SET cap_gioi_thieu=?, cap_nap=?, cap_dac_biet=?, cap_bac=? WHERE id=?',
+                                 (ref, dep, special, dep, r['id']))
+                LOGGER.info('V17.4 migrated social-service condition from 5+4 to 2+1')
+    except Exception:
+        LOGGER.exception('V17.4 social-service condition migration warning')
+
+# V17.3: ensure legacy scheduled-notification schemas have every column used
+# by both the admin composer and the scheduler.
+def _v173_repair_scheduled_notifications():
+    for table, column, definition in [
+        ("scheduled_notifications", "send_time", "TEXT"),
+        ("scheduled_notifications", "frequency", "TEXT NOT NULL DEFAULT 'once'"),
+        ("scheduled_notifications", "target", "TEXT NOT NULL DEFAULT 'all'"),
+        ("scheduled_notifications", "content", "TEXT NOT NULL DEFAULT ''"),
+        ("scheduled_notifications", "active", "INTEGER NOT NULL DEFAULT 1"),
+        ("scheduled_notifications", "last_sent_date", "TEXT"),
+        ("scheduled_notifications", "created_at", "TEXT"),
+    ]:
+        try:
+            with db() as conn:
+                _safe_add_column(conn, table, column, definition)
+        except Exception:
+            LOGGER.exception("V17.3 scheduled notification migration failed: %s.%s", table, column)
+
+_previous_init_db_v173 = init_db
+def _v19_optimize_db():
+    """Indexes cho các truy vấn nóng; idempotent, không đổi dữ liệu."""
+    indexes = [
+        ("idx_users_ref_by", "users", "ref_by"),
+        ("idx_users_active", "users", "bi_khoa"),
+        ("idx_withdrawals_status", "withdrawals", "status"),
+        ("idx_withdrawals_user_status", "withdrawals", "user_id,status"),
+        ("idx_deposits_status", "deposits", "status"),
+        ("idx_deposits_user_status", "deposits", "user_id,status"),
+        ("idx_video_links_active", "video_links", "active"),
+        ("idx_service_orders_status", "service_orders", "status"),
+        ("idx_service_orders_user", "service_orders", "user_id"),
+        ("idx_admin_logs_user", "admin_logs", "user_id"),
+    ]
+    with db() as conn:
+        for name, table, cols in indexes:
+            try:
+                conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})")
+            except Exception:
+                try: conn.rollback()
+                except Exception: pass
+
+
+def init_db():
+    _previous_init_db_v173()
+    _v173_repair_scheduled_notifications()
+    _v174_fix_social_service_condition()
+    try:
+        _v19_optimize_db()
+    except Exception:
+        LOGGER.exception("V19 database index optimization failed; bot will continue")
+
+
+# ============================================================
+# V19 PERFORMANCE / ADMIN OPTIMIZATION
+# ============================================================
+# - Dashboard gọn, ít truy vấn.
+# - Cache quyền admin và dashboard ngắn hạn.
+# - Index các truy vấn nóng.
+# - PTB xử lý đồng thời nhiều update và tăng connection pool.
+# - Không xóa chức năng dữ liệu đang sử dụng; chỉ bỏ round-trip/đường xử lý thừa.
+
+
+# ============================================================
+# V20: CORE STABILITY / LEAN OPERATIONS
+# ============================================================
+_V20_HEALTH_CACHE = {"ts": 0.0, "value": None}
+_V20_HEALTH_TTL = 5.0
+
+
+def _v20_optimize_indexes():
+    """Idempotent indexes for the hot paths. Never deletes data."""
+    indexes = [
+        ("idx_users_username", "users", "username"),
+        ("idx_users_ref_rank", "users", "cap_gioi_thieu"),
+        ("idx_users_dep_rank", "users", "cap_nap"),
+        ("idx_withdrawals_risk_status", "withdrawals", "status,risk_score"),
+        ("idx_verification_status", "verification_requests", "status"),
+        ("idx_service_orders_status_user", "service_orders", "status,user_id"),
+        ("idx_wallet_ledger_user_type", "wallet_ledger", "user_id,wallet_type"),
+        ("idx_wallet_ledger_created", "wallet_ledger", "created_at"),
+        ("idx_task_claims_user_period", "task_claims", "user_id,period_key"),
+        ("idx_gift_uses_user", "gift_code_uses", "user_id"),
+        ("idx_suspicious_user_resolved", "suspicious_events", "user_id,resolved"),
+        ("idx_scheduled_active_time", "scheduled_notifications", "active,send_time"),
+        ("idx_admin_logs_created", "admin_logs", "created_at"),
+    ]
+    with db() as conn:
+        for name, table, cols in indexes:
+            try:
+                conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})")
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+
+def _v20_health_snapshot(force=False):
+    now = time.monotonic()
+    if not force and _V20_HEALTH_CACHE["value"] is not None and now - _V20_HEALTH_CACHE["ts"] < _V20_HEALTH_TTL:
+        return _V20_HEALTH_CACHE["value"]
+    result = {"db": False, "users": 0, "pending": 0, "services": 0}
+    try:
+        with db() as conn:
+            row = conn.execute("""
+                SELECT
+                  (SELECT COUNT(*) FROM users) AS users,
+                  (SELECT COUNT(*) FROM withdrawals WHERE status='pending') AS wd,
+                  (SELECT COUNT(*) FROM deposits WHERE status='pending') AS dep,
+                  (SELECT COUNT(*) FROM verification_requests WHERE status='pending') AS ver,
+                  (SELECT COUNT(*) FROM service_orders WHERE status IN ('pending','processing')) AS svc
+            """).fetchone()
+        result.update(db=True, users=int(row['users'] or 0),
+                      pending=int(row['wd'] or 0)+int(row['dep'] or 0)+int(row['ver'] or 0),
+                      services=int(row['svc'] or 0))
+    except Exception:
+        LOGGER.exception("V20 health snapshot failed")
+    _V20_HEALTH_CACHE.update(ts=now, value=result)
+    return result
+
+
+async def _v20_admin_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not is_admin(update.effective_user.id):
+        await q.answer("❌ Không có quyền.", show_alert=True)
+        return
+    await q.answer()
+    snap = _v20_health_snapshot(force=True)
+    text = (
+        "🩺 <b>SỨC KHỎE HỆ THỐNG V20</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗄 Database: <b>{'OK' if snap['db'] else 'LỖI'}</b>\n"
+        f"👥 User: <b>{snap['users']:,}</b>\n"
+        f"⏳ Hàng chờ: <b>{snap['pending']:,}</b>\n"
+        f"🛒 Đơn dịch vụ đang xử lý: <b>{snap['services']:,}</b>\n\n"
+        "⚡ V20: ConversationHandler chạy tuần tự để tránh race-condition; "
+        "các tác vụ gửi hàng loạt nên chạy nền."
+    )
+    await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Kiểm tra lại", callback_data="admin_v9:health")],
+        [InlineKeyboardButton("⬅️ Admin", callback_data="admin_home")],
+    ]))
+
+
+_previous_init_db_v20 = init_db
+
+def init_db():
+    _previous_init_db_v20()
+    try:
+        _v20_optimize_indexes()
+    except Exception:
+        LOGGER.exception("V20 index optimization failed; continuing")
+
+
 # ============================================================
 # MAIN
 # ============================================================
 def build_application():
     init_db()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(False)
+        .connection_pool_size(24)
+        .pool_timeout(8)
+        .build()
+    )
 
     # V13: nạp tiền số dư độc lập với nâng cấp bậc.
     nap_tien_conv = ConversationHandler(
@@ -7429,11 +7523,11 @@ def build_application():
     )
     app.add_handler(nap_tien_conv, group=0)
     app.add_handler(service_conv, group=1)
-    app.add_handler(CallbackQueryHandler(v13_rank_type_callback, pattern=r'^rank_type:(ref|deposit|back)$'), group=0)
+    app.add_handler(CallbackQueryHandler(v13_rank_type_callback, pattern=r'^rank_type:(ref|deposit|special|back)$'), group=0)
     app.add_handler(CallbackQueryHandler(v13_service_admin_callback, pattern=r'^svc_admin:(process|done|reject|refund):.+$'), group=0)
     app.add_handler(CallbackQueryHandler(v13_admin_router, pattern=r'^admin_v13:'), group=0)
     admin_svc_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(v16_admin_service_callback, pattern=r'^admin_svc:(add|edit):\d*$|^admin_svc:add$')],
+        entry_points=[CallbackQueryHandler(v16_admin_service_callback, pattern=r'^admin_svc:(add|edit|conditions)(?::\d+)?$')],
         states={
             ADMIN_SVC_ADD:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_add_input)],
             ADMIN_SVC_EDIT:[MessageHandler(filters.Regex(rf'^({_NAP_MENU_TEXTS})$'), _conversation_menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, v16_admin_service_edit_input)],
@@ -7759,6 +7853,7 @@ def build_application():
         fallbacks=[CommandHandler("cancel", cancel)], per_user=True, per_chat=True, allow_reentry=True,
     )
     app.add_handler(admin_v9_broadcast_conv, group=0)
+    app.add_handler(CallbackQueryHandler(_v20_admin_health, pattern=r"^admin_v9:health$"), group=0)
     app.add_handler(CallbackQueryHandler(admin_v9_router, pattern=r"^admin_v9:"), group=0)
     app.add_handler(CallbackQueryHandler(
         extra_callback_router,
