@@ -45,7 +45,7 @@ from telegram.ext import (
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFKQg9_SpdAYo1iAqYwTfueD6TOifJZvE8").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -105,13 +105,32 @@ def _make_webhook_handler(application, loop):
                 self.wfile.write(body)
 
         def do_GET(self):
-            if self.path.split("?", 1)[0] in ("/", "/health"):
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                html = (
+                    "<!doctype html><html><head><meta charset=\"utf-8\">"
+                    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                    "<title>XU TIKTOK - Online</title></head>"
+                    "<body style=\"font-family:Arial,sans-serif;background:#f5f7fb;display:flex;"
+                    "justify-content:center;align-items:center;min-height:100vh;margin:0\">"
+                    "<div style=\"background:#fff;border-radius:18px;padding:28px;max-width:520px;"
+                    "width:calc(100% - 48px);box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center\">"
+                    "<div style=\"font-size:44px\">🟢</div>"
+                    "<h1 style=\"margin:10px 0 8px\">XU TIKTOK</h1>"
+                    "<p style=\"font-size:18px;color:#198754;font-weight:700;margin:0 0 12px\">BOT ONLINE</p>"
+                    "<p style=\"color:#666;line-height:1.5\">Telegram Webhook đang hoạt động bình thường.</p>"
+                    "<p style=\"font-size:13px;color:#888;margin-top:20px\">Render Web Service • Telegram Webhook</p>"
+                    "</div></body></html>"
+                ).encode("utf-8")
+                self._send(200, html, "text/html; charset=utf-8")
+            elif path == "/health":
                 self._send(200, b"OK")
             else:
                 self._send(404, b"Not Found")
 
         def do_HEAD(self):
-            if self.path.split("?", 1)[0] in ("/", "/health"):
+            path = self.path.split("?", 1)[0]
+            if path in ("/", "/health"):
                 self._send(200, b"")
             else:
                 self._send(404, b"")
