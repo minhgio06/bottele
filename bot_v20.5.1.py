@@ -557,7 +557,8 @@ async def _v2051_callback_fallback(update: Update, context: ContextTypes.DEFAULT
     q = update.callback_query
     if not q or getattr(q, "_v2051_answered", False):
         return
-    await _safe_callback_answer(q, "✅ Đã nhận thao tác.")
+    LOGGER.warning("UNHANDLED_CALLBACK data=%r user_id=%s", getattr(q, "data", None), getattr(getattr(q, "from_user", None), "id", None))
+    await _safe_callback_answer(q, "⚠️ Nút này chưa được xử lý. Đã ghi log để kiểm tra.", show_alert=True)
 
 
 def init_db():
@@ -4192,6 +4193,13 @@ def init_db():
                 PRIMARY KEY (user_id, task_code, period_key)
             )
         """)
+        # V20.5.2: tương thích DB cũ nếu task_claims thiếu schema mới.
+        # Render/Neon có thể giữ bảng từ phiên bản trước, nên CREATE IF NOT EXISTS
+        # không tự bổ sung các cột còn thiếu.
+        _safe_add_column(conn, "task_claims", "task_code", "TEXT")
+        _safe_add_column(conn, "task_claims", "period_key", "TEXT")
+        _safe_add_column(conn, "task_claims", "claimed_at", "TEXT")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gift_codes (
                 code TEXT PRIMARY KEY,
@@ -6031,6 +6039,10 @@ def init_db():
     _v204_previous_init_db()
     try:
         with db() as conn:
+            # V20.5.2: đảm bảo schema task_claims tồn tại đầy đủ trên DB cũ.
+            _safe_add_column(conn, "task_claims", "task_code", "TEXT")
+            _safe_add_column(conn, "task_claims", "period_key", "TEXT")
+            _safe_add_column(conn, "task_claims", "claimed_at", "TEXT")
             users = conn.execute("SELECT id FROM users").fetchall()
             for row in users:
                 _v204_sync_deposit_rank(conn, row['id'])
@@ -6628,13 +6640,63 @@ async def v13_admin_services(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text="🛒 <b>QUẢN LÝ DỊCH VỤ TIKTOK</b>\n━━━━━━━━━━━━━━━━━━━━\n"+("\n\n".join(f"<code>{r['order_id']}</code> • {h(r['name'])}\n👤 {r['user_id']} • 🔢 {r['quantity']:,} • 💵 {r['total']:,}đ\n📌 {st.get(r['status'],r['status'])}" for r in rows) if rows else 'Chưa có đơn.')
     await q.message.reply_text(text,parse_mode='HTML',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Admin',callback_data='admin_home')]]))
 
+async def admin_button_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """V20.7: kiểm tra nhanh độ phủ callback và các nút tĩnh chưa có handler."""
+    q = update.callback_query
+    if not is_admin(q.from_user.id):
+        await _safe_callback_answer(q, "Không có quyền.", show_alert=True)
+        return
+    await _safe_callback_answer(q)
+    import ast as _ast, re as _re
+    try:
+        source = open(__file__, 'r', encoding='utf-8').read()
+        tree = _ast.parse(source)
+        functions = sum(isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) for n in _ast.walk(tree))
+        callback_handlers = len(_re.findall(r'CallbackQueryHandler\s*\(', source))
+        message_handlers = len(_re.findall(r'MessageHandler\s*\(', source))
+        literals = sorted(set(_re.findall(r'callback_data\s*=\s*["\']([^"\']+)["\']', source)))
+        patterns = _re.findall(r'CallbackQueryHandler\s*\(.*?pattern\s*=\s*r?["\']([^"\']+)["\']', source, _re.S)
+        uncovered = [c for c in literals if not any(_re.search(pat, c) for pat in patterns)]
+        duplicate_names = {}
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                duplicate_names.setdefault(node.name, []).append(node.lineno)
+        duplicate_names = {k:v for k,v in duplicate_names.items() if len(v) > 1 and k != '__init__'}
+        lines = [
+            '🧪 <b>KIỂM TRA NÚT & CHỨC NĂNG</b>',
+            '━━━━━━━━━━━━━━━━━━━━',
+            f'🐍 Hàm trong bot: <b>{functions}</b>',
+            f'🔘 Callback handler: <b>{callback_handlers}</b>',
+            f'⌨️ Message handler: <b>{message_handlers}</b>',
+            f'✅ Callback tĩnh đã kiểm tra: <b>{len(literals)}</b>',
+            f'❌ Callback tĩnh chưa phủ: <b>{len(uncovered)}</b>',
+            '',
+            '🔐 DV đặc biệt: <b>GT cấp 2 + Nạp cấp 1</b>',
+        ]
+        if uncovered:
+            lines += ['\n⚠️ <b>Nút cần kiểm tra:</b>'] + [f'• <code>{x}</code>' for x in uncovered[:30]]
+        else:
+            lines.append('\n✅ Tất cả callback_data tĩnh đều khớp ít nhất một pattern handler.')
+        if duplicate_names:
+            lines.append(f'\nℹ️ Có <b>{len(duplicate_names)}</b> tên hàm được định nghĩa nhiều lần; các bản sau có thể ghi đè bản trước.')
+        lines.append('\n📌 Callback động (f-string) vẫn cần test thực tế bằng cách bấm nút trên Telegram.')
+        await q.message.reply_text('\n'.join(lines), parse_mode='HTML', reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('🔄 Kiểm tra lại', callback_data='admin_button_audit')],
+            [InlineKeyboardButton('⬅️ Admin', callback_data='admin_home')],
+        ]))
+    except Exception as exc:
+        LOGGER.exception('Button audit failed')
+        await q.message.reply_text(f'❌ Không thể kiểm tra: <code>{h(str(exc))}</code>', parse_mode='HTML')
+
+
 def _v13_admin_dashboard_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('💸 Rút',callback_data='admin_ds_rut'),InlineKeyboardButton('📥 Nạp',callback_data='admin_ds_nap'),InlineKeyboardButton('🛡 Xác minh',callback_data='admin_ds_xacminh')],
         [InlineKeyboardButton('👥 User',callback_data='admin_ds_nguoi'),InlineKeyboardButton('🎬 Video',callback_data='admin_video'),InlineKeyboardButton('🛒 Dịch vụ',callback_data='admin_svc:list')],
         [InlineKeyboardButton('💰 + Tiền',callback_data='admin_cong_tien'),InlineKeyboardButton('💸 - Tiền',callback_data='admin_tru_tien'),InlineKeyboardButton('📢 Thông báo',callback_data='admin_gui_tb')],
         [InlineKeyboardButton('📊 Báo cáo',callback_data='admin_ext:reports'),InlineKeyboardButton('🛡 Anti-fraud',callback_data='admin_ext:fraud'),InlineKeyboardButton('⚙️ Cài đặt',callback_data='admin_ext:config')],
-        [InlineKeyboardButton('🚀 Smart Center',callback_data='admin_v9:dashboard'),InlineKeyboardButton('🔄 Làm mới',callback_data='admin_refresh')],
+        [InlineKeyboardButton('🧪 Kiểm tra nút',callback_data='admin_button_audit'),InlineKeyboardButton('🚀 Smart Center',callback_data='admin_v9:dashboard')],
+        [InlineKeyboardButton('🔄 Làm mới',callback_data='admin_refresh')],
     ])
 
 
@@ -6838,26 +6900,20 @@ def _admin_user_detail_keyboard(user_id):
 # ============================================================
 # V15 UPGRADE: 3 LOẠI CẤP BẬC + DỊCH VỤ ĐẶC BIỆT + HARDENING
 # ============================================================
-V15_REF_UNLOCK_LEVEL = 5       # Giá trị mặc định, có thể chỉnh trong Admin
-V15_DEPOSIT_UNLOCK_LEVEL = 4   # Giá trị mặc định, có thể chỉnh trong Admin
+V15_REF_UNLOCK_LEVEL = 2       # Dịch vụ đặc biệt: bắt buộc cấp giới thiệu 2
+V15_DEPOSIT_UNLOCK_LEVEL = 1   # Dịch vụ đặc biệt: bắt buộc cấp nạp 1
 V15_SPECIAL_RANKS = [
     'Chưa mở', 'Đặc Quyền I', 'Đặc Quyền II', 'Đặc Quyền III', 'VIP', 'VIP+'
 ]
 
 
 def _v15_unlock_requirements():
-    """Điều kiện mở dịch vụ đặc biệt, có thể thay đổi từ Admin."""
-    try:
-        ref_max = max(1, len(MOC_CAP))
-        dep_names = sorted(CAP_NAP_AMOUNT.items(), key=lambda x: x[1])
-        dep_max = max(1, len(dep_names))
-        ref = int(get_setting('special_ref_unlock_level', V15_REF_UNLOCK_LEVEL))
-        dep = int(get_setting('special_deposit_unlock_level', V15_DEPOSIT_UNLOCK_LEVEL))
-        ref = max(1, min(ref, ref_max))
-        dep = max(1, min(dep, dep_max))
-        return ref, dep
-    except Exception:
-        return V15_REF_UNLOCK_LEVEL, V15_DEPOSIT_UNLOCK_LEVEL
+    """Điều kiện CỐ ĐỊNH để mở dịch vụ đặc biệt: cấp giới thiệu 2 + cấp nạp 1.
+
+    Không đọc cấu hình cũ trong system_settings để tránh DB cũ (5|4)
+    làm điều kiện quay lại sai sau khi deploy.
+    """
+    return V15_REF_UNLOCK_LEVEL, V15_DEPOSIT_UNLOCK_LEVEL
 
 
 def _v15_unlock_names():
@@ -6981,7 +7037,7 @@ async def nang_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref, dep, special, ref_level, dep_level = _v15_rank_state(u)
     total = int(u.get('total_deposited', 0) or 0)
     next_name, next_amount = _v204_next_deposit_tier(total)
-    dep_level = _v204_deposit_level(nap)
+    dep_level = _v204_deposit_level(dep)
     if next_name:
         next_line = f"🎯 Còn <b>{next_amount-total:,}đ</b> để lên <b>{h(next_name)}</b>"
     else:
@@ -7254,12 +7310,11 @@ async def v16_admin_service_callback(update: Update, context: ContextTypes.DEFAU
             '⚙️ <b>ĐIỀU KIỆN DỊCH VỤ ĐẶC BIỆT</b>\n\n'
             f'👥 Cấp giới thiệu tối thiểu: <b>{ref_req}</b> — {h(ref_name)}\n'
             f'💳 Cấp nạp tối thiểu: <b>{dep_req}</b> — {h(dep_name)}\n\n'
-            'Gửi theo mẫu: <code>cấp_giới_thiệu|cấp_nạp</code>\n'
-            'Ví dụ: <code>5|4</code>\n\n'
+            '🔒 Điều kiện đã cố định: <code>2|1</code> (GT cấp 2 + Nạp cấp 1).\n\n'
             f'📌 Giới hạn hợp lệ: GT 1–{len(MOC_CAP)}, Nạp 1–{len(CAP_NAP_AMOUNT)}',
             parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
-        context.user_data['admin_service_mode'] = 'conditions'
-        return ADMIN_SVC_CONDITIONS
+        context.user_data.pop('admin_service_mode', None)
+        return ConversationHandler.END
     if action == 'add':
         await _safe_callback_answer(q, )
         await q.message.reply_text(
@@ -7339,26 +7394,13 @@ async def v16_admin_service_add_input(update: Update, context: ContextTypes.DEFA
 async def v16_admin_service_conditions_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
-    raw = (update.effective_message.text or '').strip().replace(' ', '')
-    parts = raw.split('|')
-    if len(parts) != 2:
-        await update.message.reply_text('❌ Nhập đúng mẫu: <code>5|4</code>', parse_mode='HTML')
-        return ADMIN_SVC_CONDITIONS
-    try:
-        ref_req, dep_req = int(parts[0]), int(parts[1])
-    except ValueError:
-        await update.message.reply_text('❌ Hai giá trị phải là số nguyên.')
-        return ADMIN_SVC_CONDITIONS
-    if not (1 <= ref_req <= len(MOC_CAP)) or not (1 <= dep_req <= len(CAP_NAP_AMOUNT)):
-        await update.message.reply_text(f'❌ Giới hạn: GT 1–{len(MOC_CAP)} và Nạp 1–{len(CAP_NAP_AMOUNT)}.')
-        return ADMIN_SVC_CONDITIONS
-    set_setting('special_ref_unlock_level', ref_req)
-    set_setting('special_deposit_unlock_level', dep_req)
-    admin_log('special_service_condition_update', detail=f'ref={ref_req},deposit={dep_req}')
-    _, _, ref_name, dep_name = _v15_unlock_names()
     context.user_data.pop('admin_service_mode', None)
+    _, _, ref_name, dep_name = _v15_unlock_names()
     await update.message.reply_text(
-        f'✅ <b>Đã cập nhật điều kiện dịch vụ đặc biệt</b>\n\n👥 GT: cấp <b>{ref_req}</b> — {h(ref_name)}\n💳 Nạp: cấp <b>{dep_req}</b> — {h(dep_name)}',
+        f'🔒 <b>Điều kiện dịch vụ đặc biệt đã cố định</b>\n\n'
+        f'👥 Cấp giới thiệu: <b>2</b> — {h(ref_name)}\n'
+        f'💳 Cấp nạp: <b>1</b> — {h(dep_name)}\n\n'
+        'Không cần nhập/chỉnh điều kiện. Chỉ khi đạt đủ <b>cả 2</b> điều kiện mới được mở dịch vụ.',
         parse_mode='HTML', reply_markup=menu_chinh(update.effective_user.id))
     return ConversationHandler.END
 
@@ -7711,6 +7753,14 @@ def build_application():
             ),
         ),
         group=1,
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_button_audit_callback,
+            pattern=r"^admin_button_audit$",
+        ),
+        group=0,
     )
 
     app.add_handler(
