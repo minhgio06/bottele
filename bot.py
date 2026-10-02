@@ -19,7 +19,10 @@ import re
 import ast
 import warnings
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+import json
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta
@@ -48,7 +51,7 @@ from telegram.ext import (
 )
 
 # ============================================================
-# V21: THEO DÕI CALLBACK THỰC TẾ - CHỐNG BÁO LỖI GIẢ
+# V22: THEO DÕI CALLBACK + TIKTOK DISCOVERY + ADMIN PRO
 # ============================================================
 class V21TrackedCallbackQueryHandler(CallbackQueryHandler):
     """Đánh dấu callback đã được một handler thực thi thành công.
@@ -113,6 +116,19 @@ if not WEBHOOK_PATH.startswith("/"):
     WEBHOOK_PATH = "/" + WEBHOOK_PATH
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 
+# V22 TikTok discovery: không cần Admin nhập link. Nếu có Research API token
+# hợp lệ thì ưu tiên API chính thức; nếu không có, dùng public search HTML
+# làm nguồn dự phòng. Cả hai đều chỉ lấy URL video công khai.
+TIKTOK_RESEARCH_ACCESS_TOKEN = os.getenv("TIKTOK_RESEARCH_ACCESS_TOKEN", "").strip()
+TIKTOK_DISCOVERY_ENABLED = os.getenv("TIKTOK_DISCOVERY_ENABLED", "1").strip() != "0"
+TIKTOK_DISCOVERY_TIMEOUT = max(5, int(os.getenv("TIKTOK_DISCOVERY_TIMEOUT", "12")))
+TIKTOK_DISCOVERY_KEYWORDS = [
+    x.strip() for x in os.getenv(
+        "TIKTOK_DISCOVERY_KEYWORDS",
+        "vietnam,viral,funny,food,travel,music,football,pet,lifehack"
+    ).split(",") if x.strip()
+]
+
 
 def get_public_webhook_url():
     base = WEBHOOK_URL or os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -122,6 +138,181 @@ def get_public_webhook_url():
             "RENDER_EXTERNAL_URL tự cung cấp hoặc đặt WEBHOOK_URL thủ công."
         )
     return f"{base}{WEBHOOK_PATH}"
+
+
+def _mask_account(raw):
+    """Che số tài khoản trong mọi thông báo công khai; giữ tối đa 4 số cuối."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return "Ẩn"
+    def repl(m):
+        digits = m.group(0)
+        if len(digits) <= 4:
+            return "*" * len(digits)
+        return "*" * (len(digits) - 4) + digits[-4:]
+    return re.sub(r"\d{4,}", repl, raw)
+
+
+def _tiktok_public_url(username, video_id):
+    username = str(username or "").strip().lstrip("@")
+    video_id = str(video_id or "").strip()
+    if video_id.isdigit():
+        if username:
+            return f"https://www.tiktok.com/@{username}/video/{video_id}"
+        return f"https://www.tiktok.com/share/video/{video_id}"
+    return ""
+
+
+def _http_get_text(url, timeout=None):
+    req = Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    })
+    with urlopen(req, timeout=timeout or TIKTOK_DISCOVERY_TIMEOUT) as resp:
+        return resp.read().decode("utf-8", "ignore")
+
+
+def _discover_tiktok_via_research_api():
+    """Nguồn chính thức tùy chọn. Cần token Research API đã được TikTok cấp."""
+    token = TIKTOK_RESEARCH_ACCESS_TOKEN
+    if not token:
+        return []
+    end = now_vn().date()
+    start = end - timedelta(days=30)
+    keyword = random.choice(TIKTOK_DISCOVERY_KEYWORDS or ["vietnam"])
+    body = {
+        "query": {"and": [
+            {"operation": "IN", "field_name": "region_code", "field_values": ["VN"]},
+            {"operation": "EQ", "field_name": "keyword", "field_values": [keyword]},
+        ]},
+        "max_count": 50,
+        "cursor": 0,
+        "start_date": start.strftime("%Y%m%d"),
+        "end_date": end.strftime("%Y%m%d"),
+        "is_random": True,
+    }
+    url = "https://open.tiktokapis.com/v2/research/video/query/?fields=id,username"
+    req = Request(url, data=json.dumps(body).encode(), method="POST", headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "User-Agent": "XU-TIKTOK-BOT-V22",
+    })
+    try:
+        with urlopen(req, timeout=TIKTOK_DISCOVERY_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+        videos = ((data.get("data") or {}).get("videos") or [])
+        out = []
+        for item in videos:
+            url = _tiktok_public_url(item.get("username"), item.get("id"))
+            if url:
+                out.append(url)
+        return list(dict.fromkeys(out))
+    except Exception as exc:
+        LOGGER.warning("TikTok Research API discovery failed: %s", exc)
+        return []
+
+
+def _discover_tiktok_via_public_search():
+    """Không cần token. Tìm URL video công khai từ các trang search/tag của TikTok.
+    TikTok có thể thay đổi HTML hoặc chặn traffic tự động; khi đó trả [] để caller
+    báo tạm thời không có video thay vì dùng một link cố định do Admin nhập.
+    """
+    if not TIKTOK_DISCOVERY_ENABLED:
+        return []
+    keywords = TIKTOK_DISCOVERY_KEYWORDS or ["vietnam"]
+    keyword = random.choice(keywords)
+    urls = [
+        "https://www.tiktok.com/search?" + urlencode({"q": keyword}),
+        "https://www.tiktok.com/tag/" + quote(keyword.replace(" ", ""), safe=""),
+    ]
+    found = []
+    pattern = re.compile(r"https?://(?:www\.)?tiktok\.com/@[^\"'<>\\s]+?/video/\d+", re.I)
+    for url in urls:
+        try:
+            html_text = _http_get_text(url)
+            html_text = html_text.replace("\\u002F", "/").replace("\\/", "/")
+            for match in pattern.findall(html_text):
+                clean = match.rstrip("\\,.;)]}")
+                if clean not in found:
+                    found.append(clean)
+                if len(found) >= 50:
+                    return found
+        except (HTTPError, URLError, TimeoutError) as exc:
+            LOGGER.warning("TikTok public search failed url=%s: %s", url, exc)
+        except Exception:
+            LOGGER.exception("TikTok public discovery unexpected error")
+    return found
+
+
+def _cache_tiktok_urls(urls):
+    """Lưu cache URL đã discover để tăng độ ổn định cho các lượt sau."""
+    if not urls:
+        return
+    try:
+        with db() as conn:
+            for url in urls:
+                try:
+                    conn.execute(
+                        "INSERT INTO video_links(url,active,views,claimed,reward_total,category,created_at) VALUES (?,?,0,0,0,?,?) ON CONFLICT(url) DO UPDATE SET active=1",
+                        (url, 1, "auto", now_vn().strftime("%d/%m/%Y %H:%M:%S")),
+                    )
+                except Exception:
+                    # Database cũ có thể chưa có đầy đủ thống kê; fallback insert tối thiểu.
+                    try:
+                        conn.execute(
+                            "INSERT INTO video_links(url,created_at) VALUES (?,?) ON CONFLICT(url) DO NOTHING",
+                            (url, now_vn().strftime("%d/%m/%Y %H:%M:%S")),
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        LOGGER.exception("Không thể cache TikTok discovery")
+
+
+def _random_tiktok_video_url_sync(user_id=None):
+    """Lấy video TikTok ngẫu nhiên mà không yêu cầu Admin nhập link."""
+    discovered = _discover_tiktok_via_research_api()
+    if not discovered:
+        discovered = _discover_tiktok_via_public_search()
+    if discovered:
+        _cache_tiktok_urls(discovered)
+
+    # Ưu tiên video chưa xem hôm nay trong cache tự động + video hợp lệ khác.
+    try:
+        with db() as conn:
+            if user_id is not None:
+                prefix = now_vn().strftime("%d/%m/%Y")
+                rows = conn.execute(
+                    """SELECT v.id,v.url FROM video_links v
+                       WHERE COALESCE(v.active,1)=1
+                         AND (COALESCE(v.category,'default')='auto' OR v.url LIKE '%tiktok.com/%')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM video_watch_logs l
+                           WHERE l.user_id=? AND l.video_id=v.id AND l.watched_at LIKE ?
+                         ) ORDER BY RANDOM() LIMIT 1""",
+                    (user_id, prefix + "%"),
+                ).fetchall()
+            else:
+                rows=[]
+            if not rows:
+                rows = conn.execute(
+                    """SELECT id,url FROM video_links
+                       WHERE COALESCE(active,1)=1 AND url LIKE '%tiktok.com/%'
+                       ORDER BY RANDOM() LIMIT 1"""
+                ).fetchall()
+        if rows:
+            return rows[0]["url"], rows[0]["id"]
+    except Exception:
+        LOGGER.exception("Không lấy được video TikTok từ cache")
+
+    if discovered:
+        return random.choice(discovered), None
+    return "", None
+
+
+async def get_random_tiktok_video(user_id=None):
+    return await asyncio.to_thread(_random_tiktok_video_url_sync, user_id)
 
 
 def _make_webhook_handler(application, loop):
@@ -139,7 +330,7 @@ def _make_webhook_handler(application, loop):
             if path == "/health":
                 self._send(200, b"OK", "text/plain; charset=utf-8")
             elif path == "/":
-                self._send(200, b"XU TIKTOK BOT V21 OK", "text/plain; charset=utf-8")
+                self._send(200, b"XU TIKTOK BOT V22 OK", "text/plain; charset=utf-8")
             else:
                 self._send(404, b"Not Found")
 
@@ -219,7 +410,7 @@ def start_webhook_server(application, loop):
     return server
 
 
-# Logging production-friendly. V21 also prevents Telegram bot tokens from
+# Logging production-friendly. V22 also prevents Telegram bot tokens from
 # being written to Render logs (httpx/telegram URLs may contain the token).
 class _V21RedactFilter(logging.Filter):
     def filter(self, record):
@@ -1237,14 +1428,12 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reset_daily_if_needed(u)
-
     if int(get_setting("captcha_required", 1)) and not u["captcha_da_xac_minh"]:
         await update.message.reply_text(
             "🔐 Vui lòng nhấn [Nhập CaptCha] để xác minh trước!",
             reply_markup=menu_chinh(u["id"]),
         )
         return
-
     if u["dang_xem"]:
         await update.message.reply_text(
             "⏳ Bạn đang có một phiên xem đang xử lý, vui lòng chờ.",
@@ -1252,81 +1441,55 @@ async def xem_tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    cfg = CAP_BAC_CONFIG[u["cap_bac"]]
+    cfg = CAP_BAC_CONFIG.get(u["cap_bac"], CAP_BAC_CONFIG["Thành viên"])
     if u["video_ngay"] >= cfg["gioi_han_xem_ngay"]:
         await update.message.reply_text(
-            f"""⏳ Đã hết lượt xem hôm nay!
+            f"⏳ Đã hết lượt xem hôm nay!\n\n📺 Giới hạn {h(u['cap_bac'])}: {cfg['gioi_han_xem_ngay']} video/ngày\n💵 Thưởng/video: {cfg['xu_moi_video']:,}đ/video",
+            reply_markup=menu_chinh(u["id"]),
+        )
+        return
 
-📺 Giới hạn {h(u['cap_bac'])}: {cfg['gioi_han_xem_ngay']} video/ngày
-💵 Thưởng/video: {cfg['xu_moi_video']:,}đ/video
-
-👉 Nâng cấp gói để xem nhiều hơn.""",
+    # V22: không còn phụ thuộc vào LINK_VIDEO hay việc Admin phải nhập link.
+    video_link, video_id = await get_random_tiktok_video(u["id"])
+    if not video_link:
+        await update.message.reply_text(
+            "⚠️ Hiện chưa lấy được video TikTok công khai.\n\n"
+            "Hệ thống sẽ tự thử lại ở lượt tiếp theo; Admin không cần thêm link thủ công.",
             reply_markup=menu_chinh(u["id"]),
         )
         return
 
     u["dang_xem"] = True
     save_user(u)
-
-    video_link = runtime_text("video_default_link", LINK_VIDEO)
-    video_id = None
-    try:
-        with db() as conn:
-            recent_prefix = now_vn().strftime("%d/%m/%Y")
-            video_rows = conn.execute(
-                """SELECT v.id, v.url FROM video_links v
-                   WHERE v.active=1 AND NOT EXISTS (
-                       SELECT 1 FROM video_watch_logs l
-                       WHERE l.user_id=? AND l.video_id=v.id
-                         AND l.watched_at LIKE ?
-                   )
-                   ORDER BY RANDOM() LIMIT 1""",
-                (u["id"], recent_prefix + "%"),
-            ).fetchall()
-            if not video_rows:
-                video_rows = conn.execute(
-                    "SELECT id,url FROM video_links WHERE active=1 ORDER BY RANDOM() LIMIT 1"
-                ).fetchall()
-        if video_rows:
-            video_id = video_rows[0]["id"]
-            video_link = video_rows[0]["url"]
-    except Exception:
-        LOGGER.exception("Không lấy được danh sách video, dùng LINK_VIDEO mặc định")
-
     msg = await update.message.reply_text(
-        f"""🔍 XEM TIKTOK — {h(u['cap_bac'])}
-
-📺 Video hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']}
-💰 Thưởng: {cfg['xu_moi_video']:,}đ/video
-⏱ Thời gian xem: 15 giây
-
-👉 Bấm mở video và xem đủ 15 giây.
-⌛ Sau 15 giây nút nhận thưởng sẽ xuất hiện.""",
+        f"""🔍 <b>XEM VIDEO TIKTOK NGẪU NHIÊN</b>\n\n"
+        f"🏆 Cấp: <b>{h(u['cap_bac'])}</b>\n"
+        f"📺 Video hôm nay: {u['video_ngay']}/{cfg['gioi_han_xem_ngay']}\n"
+        f"💰 Thưởng: {cfg['xu_moi_video']:,}đ/video\n"
+        f"⏱ Thời gian phiên: 15 giây\n\n"
+        "🎬 Video được hệ thống lấy ngẫu nhiên từ TikTok công khai.\n"
+        "👉 Mở video và xem đủ thời gian, sau đó nhận thưởng.""",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=video_link)]]
-        ),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎬 MỞ VIDEO TIKTOK", url=video_link)]]),
     )
-
     context.user_data["watch_message_id"] = msg.message_id
     context.user_data["watch_video_id"] = video_id
+    context.user_data["watch_video_url"] = video_link
+    context.user_data["watch_started_at"] = time.time()
 
     await asyncio.sleep(15)
-
     u = get_user(u["id"])
     if not u or not u["dang_xem"]:
         return
-
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(
-            f"✅ NHẬN {cfg['xu_moi_video']:,}đ",
-            callback_data=f"nhan_thuong:{u['id']}:{msg.message_id}",
-        )]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+        f"✅ NHẬN {cfg['xu_moi_video']:,}đ",
+        callback_data=f"nhan_thuong:{u['id']}:{msg.message_id}",
+    )]])
     try:
         await msg.edit_reply_markup(reply_markup=keyboard)
     except Exception:
         pass
+
 
 
 async def nhan_thuong_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2211,7 +2374,7 @@ async def cap_nhat_thong_bao_rut_kenh(context, message_id, request_id, trang_tha
             "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
             f"📋 Mã: <code>{h(request_id)}</code>\n"
             f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
-            f"🔗 Tài khoản: {h(tai_khoan)}\n"
+            f"🔗 Tài khoản: {h(_mask_account(tai_khoan))}\n"
             f"👤 Người nhận: <b>{h(ten)}</b>\n\n"
             "✅ <b>Đã duyệt.</b>"
         )
@@ -2241,7 +2404,7 @@ async def gui_thong_bao_rut_thanh_cong(context, ma_rut, so_tien, tai_khoan, ten_
         "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
         f"📋 Mã: <code>{h(ma_rut)}</code>\n"
         f"💵 Số tiền: <b>{so_tien:,}đ</b>\n"
-        f"🔗 Tài khoản: {h(tai_khoan)}\n"
+        f"🔗 Tài khoản: {h(_mask_account(tai_khoan))}\n"
         f"👤 Người nhận: <b>{h(ten_nguoi_nhan)}</b>\n\n"
         "✅ <b>Đã duyệt.</b>"
     )
@@ -2249,6 +2412,30 @@ async def gui_thong_bao_rut_thanh_cong(context, ma_rut, so_tien, tai_khoan, ten_
         await context.bot.send_message(chat_id=runtime_text("withdraw_announcement_channel", KENH_THONG_BAO_RUT), text=text, parse_mode="HTML")
     except Exception as exc:
         LOGGER.exception("Không gửi được thông báo rút thành công vào kênh: %r", exc)
+
+
+async def gui_thong_bao_nap_thanh_cong(context, ma_nap, so_tien, ten_nguoi_nap, cap_nap=None):
+    """Thông báo NẠP TIỀN thành công lên kênh @rutxutiktok.
+    Số tài khoản nhận tiền luôn được che, chỉ hiện 4 số cuối.
+    """
+    channel = runtime_text("deposit_announcement_channel", KENH_THONG_BAO_RUT or KENH_THONG_BAO).strip()
+    if not channel:
+        return
+    try:
+        bank = runtime_text("deposit_bank", "ACB").strip()
+        account = runtime_text("deposit_account_number", "25607451").strip()
+        text = (
+            "💰 <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n"
+            f"📋 Mã: <code>{h(ma_nap)}</code>\n"
+            f"💵 Số tiền: <b>{int(so_tien):,}đ</b>\n"
+            f"🏦 Tài khoản nhận: <b>{h(bank)} {_mask_account(account)}</b>\n"
+            f"👤 Người nạp: <b>{h(ten_nguoi_nap)}</b>\n"
+            + (f"🏆 Cấp nạp: <b>{h(cap_nap)}</b>\n" if cap_nap else "") +
+            "\n✅ <b>Đã ghi nhận thành công.</b>"
+        )
+        await context.bot.send_message(chat_id=channel, text=text, parse_mode="HTML")
+    except Exception as exc:
+        LOGGER.exception("Không gửi được thông báo nạp thành công: %r", exc)
 
 
 # RÚT TIỀN + LIÊN KẾT TÀI KHOẢN
@@ -2977,6 +3164,10 @@ Vui lòng liên hệ hỗ trợ để được kiểm tra.""",
                     await context.bot.send_message(chat_id=yc["user_id"], text=(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n💵 +{yc['gia']:,}đ\n💳 Số dư dịch vụ: <b>{user_now['so_du_nap']:,}đ</b>\n💰 Số dư kiếm được: <b>{user_now['so_du']:,}đ</b>\n💳 Cấp nạp: <b>{h(user_now['cap_nap'] or 'Thành viên')}</b>" if user_now else "✅ Nạp tiền thành công."), parse_mode="HTML")
                 else:
                     await context.bot.send_message(chat_id=yc["user_id"], text=f"""✅ <b>NÂNG CẤP THÀNH CÔNG!</b>\n\n🏆 Cấp nạp: {h(yc['cap_moi'])}\n📺 Giới hạn: {CAP_BAC_CONFIG[yc['cap_moi']]['gioi_han_xem_ngay']} video/ngày\n💵 Thưởng/video: {CAP_BAC_CONFIG[yc['cap_moi']]['xu_moi_video']:,}đ""", parse_mode="HTML")
+                if str(yc.get("deposit_type", "rank")) == "balance":
+                    user_now = conn.execute("SELECT cap_nap FROM users WHERE id=?", (yc["user_id"],)).fetchone()
+                    cap_now = user_now["cap_nap"] if user_now else None
+                    await gui_thong_bao_nap_thanh_cong(context, ma_nap, yc["gia"], yc["ten"], cap_now)
                 await query.edit_message_text(
                     f"✅ Đã duyệt {h(ma_nap)} → {h(yc['ten'])} lên {h(yc['cap_moi'])}."
                 )
@@ -3103,7 +3294,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                     "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
                     f"📋 Mã: <code>{h(request_id)}</code>\n"
                     f"💵 Số tiền: {yc['so_tien']:,}đ\n"
-                    f"🔗 Tài khoản: {h(yc['tai_khoan'])}\n"
+                    f"🔗 Tài khoản: {h(_mask_account(yc['tai_khoan']))}\n"
                     "✅ Đã duyệt."
                 ),
                 parse_mode="HTML",
@@ -3286,6 +3477,12 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                          f"💵 Thưởng/video: {CAP_BAC_CONFIG[yc['cap_moi']]['xu_moi_video']:,}đ\n"
                          f"🔔 Mã: <code>{h(yc['request_id'])}</code>")
                 await context.bot.send_message(chat_id=yc["user_id"],text=txt,parse_mode="HTML")
+                if str(yc.get("deposit_type", "rank")) == "balance":
+                    try:
+                        user_now = get_user(yc["user_id"])
+                        await gui_thong_bao_nap_thanh_cong(context, yc["request_id"], yc["gia"], yc["ten"], user_now.get("cap_nap") if user_now else None)
+                    except Exception:
+                        LOGGER.exception("Bulk deposit announcement failed: %s", yc["request_id"])
             except Exception:
                 pass
 
@@ -3297,7 +3494,7 @@ Vui lòng kiểm tra lại thông tin chuyển khoản hoặc liên hệ hỗ tr
                         "✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n"
                         f"📋 Mã: <code>{h(yc['request_id'])}</code>\n"
                         f"💵 Số tiền: {yc['so_tien']:,}đ\n"
-                        f"🔗 Tài khoản: {h(yc['tai_khoan'])}\n"
+                        f"🔗 Tài khoản: {h(_mask_account(yc['tai_khoan']))}\n"
                         "✅ Đã duyệt."
                     ),
                     parse_mode="HTML",
@@ -4329,7 +4526,7 @@ async def _approve_withdrawal_by_admin(q, context, request_id):
         conn.commit()
     log_user_activity(yc['user_id'],'withdraw_approved',request_id)
     try:
-        await context.bot.send_message(yc['user_id'], f"✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n📋 Mã: <code>{h(request_id)}</code>\n💵 Số tiền: {yc['so_tien']:,}đ\n🔗 Tài khoản: {h(yc['tai_khoan'])}\n\n✅ Đã duyệt.", parse_mode='HTML')
+        await context.bot.send_message(yc['user_id'], f"✅ <b>RÚT TIỀN ĐƯỢC DUYỆT!</b>\n\n📋 Mã: <code>{h(request_id)}</code>\n💵 Số tiền: {yc['so_tien']:,}đ\n🔗 Tài khoản: {h(_mask_account(yc['tai_khoan']))}\n\n✅ Đã duyệt.", parse_mode='HTML')
         await gui_thong_bao_rut_thanh_cong(context,request_id,yc['so_tien'],yc['tai_khoan'],yc['ten'])
     except Exception: pass
     await q.edit_message_text(f"✅ Đã duyệt {h(request_id)} — trừ {yc['so_tien']:,}đ.")
@@ -4754,6 +4951,7 @@ async def _admin_dashboard_content():
     kb=InlineKeyboardMarkup([
         [InlineKeyboardButton("💸 Rút tiền",callback_data="admin_ds_rut"),InlineKeyboardButton("📥 Nạp / cấp",callback_data="admin_ds_nap")],
         [InlineKeyboardButton("🛡 Xác minh",callback_data="admin_ds_xacminh"),InlineKeyboardButton("👥 Người dùng",callback_data="admin_ds_nguoi")],
+        [InlineKeyboardButton("🔎 Tìm User",callback_data="admin_tim_nguoi"),InlineKeyboardButton("📜 Giao dịch",callback_data="admin_lich_su")],
         [InlineKeyboardButton("🎬 Video & Thống kê",callback_data="admin_ext:video_stats"),InlineKeyboardButton("➕ Thêm nhiều Video",callback_data="pro_video_bulk")],
         [InlineKeyboardButton("🎯 Nhiệm vụ",callback_data="admin_ext:tasks"),InlineKeyboardButton("🎁 Gift code",callback_data="admin_ext:gift")],
         [InlineKeyboardButton("🎉 Sự kiện",callback_data="admin_ext:event"),InlineKeyboardButton("🛡 Anti-fraud",callback_data="admin_ext:fraud")],
@@ -4765,6 +4963,7 @@ async def _admin_dashboard_content():
         [InlineKeyboardButton("💾 Backup DB",callback_data="admin_ext:backup"),InlineKeyboardButton("📤 Xuất CSV",callback_data="admin_ext:csv")],
         [InlineKeyboardButton("👮 Quản lý Admin",callback_data="admin_ext:admins"),InlineKeyboardButton("⚙️ Cài đặt PRO",callback_data="admin_ext:settings")],
         [InlineKeyboardButton("🛒 DỊCH VỤ ĐẶC BIỆT",callback_data="admin_svc:list"),InlineKeyboardButton("🧪 KIỂM TRA NÚT",callback_data="admin_button_audit")],
+        [InlineKeyboardButton("♻️ Reset Bot",callback_data="admin_ext:control"),InlineKeyboardButton("👮 Quản lý Admin",callback_data="admin_ext:admins")],
         [InlineKeyboardButton("🧩 Kênh / Liên hệ / Nội dung",callback_data="admin_ext:system")],
         [InlineKeyboardButton("🧰 ĐIỀU KHIỂN BOT",callback_data="admin_ext:control")],
         [InlineKeyboardButton("💰 Cộng tiền",callback_data="admin_cong_tien"),InlineKeyboardButton("💸 Trừ tiền",callback_data="admin_tru_tien")],
@@ -4811,7 +5010,7 @@ def _admin_control_text():
 def _admin_system_text():
     items = [
         ("support_username", "🎧 Hỗ trợ"), ("support_hours", "⏰ Giờ hỗ trợ"),
-        ("announcement_channel", "📢 Kênh thông báo"), ("withdraw_announcement_channel", "💸 Kênh báo rút"),
+        ("announcement_channel", "📢 Kênh thông báo"), ("withdraw_announcement_channel", "💸 Kênh báo rút"), ("deposit_announcement_channel", "💰 Kênh báo nạp"),
         ("required_channel_1", "📢 Kênh bắt buộc 1"), ("required_channel_2", "📢 Kênh bắt buộc 2"),
         ("required_channel_link_1", "🔗 Link kênh 1"), ("required_channel_link_2", "🔗 Link kênh 2"),
         ("video_default_link", "🎬 Link video mặc định"), ("verify_bank", "🏦 Ngân hàng xác minh"),
@@ -5713,6 +5912,7 @@ def _v13_init_db_migration():
                 gt = _v13_rank_by_referral(u[2] or 0)
                 nap = _v13_rank_by_deposit(total)
                 conn.execute("UPDATE users SET cap_gioi_thieu=?, cap_nap=?, total_deposited=?, cap_bac=? WHERE id=?", (gt,nap,total,nap,u[0]))
+            conn.execute("INSERT INTO system_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", ("deposit_announcement_channel", KENH_THONG_BAO_RUT or KENH_THONG_BAO))
     except Exception:
         LOGGER.exception("V13 migration warning")
 
@@ -6620,7 +6820,7 @@ def _admin_user_detail_text_v13_sync(u):
         f"🎬 Video: <b>{int(u.get('video_da_xem',0)):,}</b>\n"
         f"🛡 Xác minh: {'✅' if u.get('xac_minh_nguoi_that',0) else '❌'}\n"
         f"🔒 {'ĐANG KHÓA' if u.get('bi_khoa',0) else 'Hoạt động'}\n"
-        f"🏦 Tài khoản: <code>{h(u.get('tai_khoan') or 'Chưa liên kết')}</code>"
+        f"🏦 Tài khoản: <code>{h(_mask_account(u.get('tai_khoan')) if u.get('tai_khoan') else 'Chưa liên kết')}</code>"
     )
 
 
