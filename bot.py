@@ -78,7 +78,7 @@ CallbackQueryHandler = V21TrackedCallbackQueryHandler
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFa3fqH2aCBULRW7mE--tzoZTg52dmOrDo").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -214,40 +214,92 @@ def _discover_tiktok_via_research_api():
 
 
 def _discover_tiktok_via_tikwm_search():
-    """Nguồn dự phòng ổn định hơn tìm HTML TikTok: tìm video công khai qua TikWM.
-    Không cần Admin nhập link và không cần TikTok Research API token.
-    Trả về link TikTok gốc để người dùng mở trực tiếp trên TikTok.
+    """Tìm video TikTok công khai qua TikWM, không cần Admin nhập link.
+
+    TikWM có endpoint search công khai; tài liệu/mã nguồn cộng đồng hiện dùng
+    /api/feed/search cho tìm video theo từ khóa. Ta thử cả host có/không có
+    www và cả GET/POST để giảm lỗi do thay đổi gateway/proxy.
     """
     if not TIKTOK_DISCOVERY_ENABLED:
         return []
+
     keyword = random.choice(TIKTOK_DISCOVERY_KEYWORDS or ["vietnam"])
-    endpoint = "https://www.tikwm.com/api/feed/search?" + urlencode({
-        "keywords": keyword,
-        "count": 20,
-        "cursor": 0,
-    })
-    try:
-        raw = _http_get_text(endpoint, timeout=TIKTOK_DISCOVERY_TIMEOUT)
-        payload = json.loads(raw)
+    query = urlencode({"keywords": keyword, "count": 20, "cursor": 0})
+    endpoints = [
+        "https://www.tikwm.com/api/feed/search?" + query,
+        "https://tikwm.com/api/feed/search?" + query,
+    ]
+
+    def parse_payload(payload):
         data = payload.get("data") or {}
-        videos = data.get("videos") or []
+        if isinstance(data, dict):
+            videos = data.get("videos") or data.get("items") or []
+        elif isinstance(data, list):
+            videos = data
+        else:
+            videos = []
         found = []
         for item in videos:
-            vid = str(item.get("id") or item.get("video_id") or "").strip()
+            if not isinstance(item, dict):
+                continue
+            vid = str(item.get("id") or item.get("video_id") or item.get("aweme_id") or "").strip()
             author = item.get("author") or {}
             if isinstance(author, dict):
-                username = str(author.get("unique_id") or author.get("uniqueId") or "").strip()
+                username = str(
+                    author.get("unique_id") or author.get("uniqueId") or
+                    author.get("uniqueId") or author.get("username") or ""
+                ).strip()
             else:
                 username = str(author or "").strip()
+            url = ""
             if vid.isdigit() and username:
                 url = _tiktok_public_url(username, vid)
-                if url and url not in found:
-                    found.append(url)
-        LOGGER.info("TikWM discovery keyword=%s found=%d", keyword, len(found))
+            if not url:
+                for key in ("web_video_url", "share_url", "url", "share_url_zh"):
+                    candidate = str(item.get(key) or "").strip()
+                    if "tiktok.com" in candidate and ("/video/" in candidate or "vm.tiktok.com" in candidate or "vt.tiktok.com" in candidate):
+                        url = candidate
+                        break
+            if url and url not in found:
+                found.append(url)
         return found
-    except Exception as exc:
-        LOGGER.warning("TikWM discovery failed keyword=%s: %s", keyword, exc)
-        return []
+
+    for endpoint in endpoints:
+        try:
+            raw = _http_get_text(endpoint, timeout=TIKTOK_DISCOVERY_TIMEOUT)
+            payload = json.loads(raw)
+            found = parse_payload(payload)
+            if found:
+                LOGGER.info("TikWM discovery keyword=%s found=%d", keyword, len(found))
+                return found
+            LOGGER.warning("TikWM returned no videos keyword=%s endpoint=%s", keyword, endpoint)
+        except Exception as exc:
+            LOGGER.warning("TikWM GET failed keyword=%s endpoint=%s: %s", keyword, endpoint, exc)
+
+    # Một số gateway chấp nhận POST form thay vì GET.
+    for endpoint in ("https://www.tikwm.com/api/feed/search", "https://tikwm.com/api/feed/search"):
+        try:
+            req = Request(
+                endpoint,
+                data=query.encode("utf-8"),
+                method="POST",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Referer": "https://www.tikwm.com/",
+                },
+            )
+            with urlopen(req, timeout=TIKTOK_DISCOVERY_TIMEOUT) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "ignore"))
+            found = parse_payload(payload)
+            if found:
+                LOGGER.info("TikWM POST discovery keyword=%s found=%d", keyword, len(found))
+                return found
+        except Exception as exc:
+            LOGGER.warning("TikWM POST failed keyword=%s endpoint=%s: %s", keyword, endpoint, exc)
+
+    return []
 
 
 def _discover_tiktok_via_public_search():
@@ -309,34 +361,29 @@ def _cache_tiktok_urls(urls):
 
 def _random_tiktok_video_url_sync(user_id=None):
     """Lấy video TikTok ngẫu nhiên mà không yêu cầu Admin nhập link."""
-    # Thứ tự fallback: API chính thức (nếu có) -> TikWM search -> HTML TikTok.
-    # TikTok thường chặn request HTML từ IP máy chủ Render, nên TikWM được ưu tiên
-    # trước public HTML để nút Xem TikTok không bị rơi vào trạng thái "không lấy được video".
-    discovered = _discover_tiktok_via_research_api()
-    if not discovered:
-        discovered = _discover_tiktok_via_tikwm_search()
-    if not discovered:
-        discovered = _discover_tiktok_via_public_search()
-    if discovered:
-        _cache_tiktok_urls(discovered)
-
-    # Ưu tiên video chưa xem hôm nay trong cache tự động + video hợp lệ khác.
+    # 1) Luôn thử cache DB trước. Nếu nguồn TikTok bên ngoài tạm lỗi, bot vẫn
+    # có thể dùng các link đã có trong DB thay vì báo "không lấy được video".
     try:
         with db() as conn:
+            rows = []
             if user_id is not None:
                 prefix = now_vn().strftime("%d/%m/%Y")
-                rows = conn.execute(
-                    """SELECT v.id,v.url FROM video_links v
-                       WHERE COALESCE(v.active,1)=1
-                         AND (COALESCE(v.category,'default')='auto' OR v.url LIKE '%tiktok.com/%')
-                         AND NOT EXISTS (
-                           SELECT 1 FROM video_watch_logs l
-                           WHERE l.user_id=? AND l.video_id=v.id AND l.watched_at LIKE ?
-                         ) ORDER BY RANDOM() LIMIT 1""",
-                    (user_id, prefix + "%"),
-                ).fetchall()
-            else:
-                rows=[]
+                try:
+                    rows = conn.execute(
+                        """SELECT v.id,v.url FROM video_links v
+                           WHERE COALESCE(v.active,1)=1
+                             AND v.url LIKE '%tiktok.com/%'
+                             AND NOT EXISTS (
+                               SELECT 1 FROM video_watch_logs l
+                               WHERE l.user_id=? AND l.video_id=v.id AND l.watched_at LIKE ?
+                             ) ORDER BY RANDOM() LIMIT 1""",
+                        (user_id, prefix + "%"),
+                    ).fetchall()
+                except Exception:
+                    # DB cũ có thể chưa có bảng/log video_watch_logs; đừng để
+                    # lỗi thống kê làm mất chức năng xem video.
+                    LOGGER.warning("TikTok watch-log query failed; using cache directly", exc_info=True)
+                    rows = []
             if not rows:
                 rows = conn.execute(
                     """SELECT id,url FROM video_links
@@ -348,8 +395,16 @@ def _random_tiktok_video_url_sync(user_id=None):
     except Exception:
         LOGGER.exception("Không lấy được video TikTok từ cache")
 
+    # 2) Nếu cache chưa có video thì tự động discover video mới.
+    discovered = _discover_tiktok_via_research_api()
+    if not discovered:
+        discovered = _discover_tiktok_via_tikwm_search()
+    if not discovered:
+        discovered = _discover_tiktok_via_public_search()
     if discovered:
+        _cache_tiktok_urls(discovered)
         return random.choice(discovered), None
+
     return "", None
 
 
@@ -7812,5 +7867,3 @@ if __name__ == "__main__":
         print("Bot đã dừng.")
     except Exception as exc:
         print("BOT START ERROR:", repr(exc))
-
-
