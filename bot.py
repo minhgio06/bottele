@@ -78,7 +78,7 @@ CallbackQueryHandler = V21TrackedCallbackQueryHandler
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFa3fqH2aCBULRW7mE--tzoZTg52dmOrDo").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
