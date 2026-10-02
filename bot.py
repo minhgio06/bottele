@@ -19,7 +19,7 @@ import re
 import ast
 import warnings
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, unquote
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 import json
@@ -78,7 +78,7 @@ CallbackQueryHandler = V21TrackedCallbackQueryHandler
 # ============================================================
 # CẤU HÌNH
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8633360420:AAFa3fqH2aCBULRW7mE--tzoZTg52dmOrDo").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8207544772")) 
 # Kênh bắt buộc:
 # - KENH_YEU_CAU: @username hoặc ID dạng -100xxxxxxxxxx của KÊNH.
@@ -302,6 +302,54 @@ def _discover_tiktok_via_tikwm_search():
     return []
 
 
+def _discover_tiktok_via_search_engines():
+    """Tự tìm link TikTok qua công cụ tìm kiếm khi các API TikTok bên ngoài bị chặn.
+
+    Không cần Admin nhập link và không cần API key. Đây là fallback cuối vì HTML
+    của công cụ tìm kiếm có thể thay đổi hoặc giới hạn request theo IP.
+    """
+    if not TIKTOK_DISCOVERY_ENABLED:
+        return []
+
+    keywords = TIKTOK_DISCOVERY_KEYWORDS or ["vietnam"]
+    keyword = random.choice(keywords)
+    query = f'site:tiktok.com/@ {keyword}'
+    search_urls = [
+        "https://html.duckduckgo.com/html/?" + urlencode({"q": query}),
+        "https://www.google.com/search?" + urlencode({"q": query, "num": 20}),
+        "https://www.bing.com/search?" + urlencode({"q": query, "count": 20}),
+    ]
+    pattern = re.compile(
+        r"https?://(?:www\.)?tiktok\.com/@[A-Za-z0-9._-]+/video/\d+",
+        re.I,
+    )
+    found = []
+
+    for search_url in search_urls:
+        try:
+            raw = _http_get_text(search_url, timeout=TIKTOK_DISCOVERY_TIMEOUT)
+            # Search engines frequently HTML-escape or percent-encode result URLs.
+            text = unquote(raw)
+            text = (
+                text.replace("&amp;", "&")
+                .replace("\\u002F", "/")
+                .replace("\\/", "/")
+            )
+            for match in pattern.findall(text):
+                clean = match.rstrip(".,;:)]}\\\"")
+                if clean not in found:
+                    found.append(clean)
+                if len(found) >= 30:
+                    LOGGER.info("TikTok search-engine discovery found=%d keyword=%s", len(found), keyword)
+                    return found
+        except Exception as exc:
+            LOGGER.warning("TikTok search-engine discovery failed url=%s: %s", search_url, exc)
+
+    if found:
+        LOGGER.info("TikTok search-engine discovery found=%d keyword=%s", len(found), keyword)
+    return found
+
+
 def _discover_tiktok_via_public_search():
     """Không cần token. Tìm URL video công khai từ các trang search/tag của TikTok.
     TikTok có thể thay đổi HTML hoặc chặn traffic tự động; khi đó trả [] để caller
@@ -396,9 +444,16 @@ def _random_tiktok_video_url_sync(user_id=None):
         LOGGER.exception("Không lấy được video TikTok từ cache")
 
     # 2) Nếu cache chưa có video thì tự động discover video mới.
+    # Nguồn 1: TikTok Research API nếu Admin đã cấp token.
     discovered = _discover_tiktok_via_research_api()
+    # Nguồn 2: search engine HTML — không cần API key, phù hợp Render hơn
+    # trong trường hợp TikWM trả 403.
+    if not discovered:
+        discovered = _discover_tiktok_via_search_engines()
+    # Nguồn 3: TikWM (thử tự động; có thể bị chặn theo IP).
     if not discovered:
         discovered = _discover_tiktok_via_tikwm_search()
+    # Nguồn 4: HTML công khai của TikTok.
     if not discovered:
         discovered = _discover_tiktok_via_public_search()
     if discovered:
@@ -800,7 +855,12 @@ class _PGConnection:
     @staticmethod
     def _convert_sql(query):
         # Code cũ dùng placeholder SQLite '?'. Psycopg dùng '%s'.
+        # Lưu ý: psycopg coi mọi dấu '%' trong SQL là cú pháp placeholder.
+        # Vì bot có nhiều câu LIKE '%tiktok.com/%', phải escape '%' literal
+        # thành '%%' trước khi đổi '?' -> '%s'. Nếu không PostgreSQL sẽ báo:
+        # "only '%s', '%b', '%t' are allowed as placeholders".
         query = query.replace("BEGIN IMMEDIATE", "BEGIN")
+        query = query.replace("%", "%%")
         return query.replace("?", "%s")
 
     def execute(self, query, params=None):
